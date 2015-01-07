@@ -1,0 +1,12 @@
+] def
+
+/invert true def
+drawreliability
+% 0.1 0.1 colorbar
+drawoutline
+drawpairs
+drawbases
+% show it
+showpage
+end
+%%EOF

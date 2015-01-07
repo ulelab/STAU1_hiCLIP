@@ -1,0 +1,146 @@
+%\VignetteIndexEntry{hiCLIP_data_analysis_4 Vignette}
+%\VignetteKeyword{high-throughput DNA sequncing}
+%\VignetteKeyword{RNA structures}
+%\VignettePackage{hiCLIP_data_analysis_4}
+\documentclass[12pt]{article}
+\usepackage{hyperref}
+\usepackage{url}
+
+\newcommand{\textprime}{\textsuperscript{\ensuremath{\prime}}}
+
+\textwidth=6.2in
+\textheight=8.5in
+\oddsidemargin=0.2in
+\evensidemargin=0.2in
+\headheight=0in
+\headsep=0in
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+\title{Appendix 7/12}
+%\author{Yoichiro Sugimoto and Jernej Ule}
+\date{\today}
+\maketitle
+
+In order to examine the validity of the hybrid reads, the enrichment of non-hybrid reads around the duplexes identified by the hybrid reads are examined.
+
+\tableofcontents
+
+\section{Packages used}
+
+<<Setting directory, echo=FALSE>>=
+ptm <- proc.time()
+options(width=60)
+
+args <- commandArgs(trailingOnly = TRUE) 
+hiCLIP_index <- grepl("hiCLIPdir=", args) 
+hiCLIP.dir <- as.character(gsub("hiCLIPdir=", "", args[hiCLIP_index])) 
+Rdir_index <- grepl("Rdir=", args) 
+R.dir <- as.character(gsub("Rdir=", "", args[Rdir_index])) 
+pythondir_index <- grepl("pythondir=", args) 
+python.dir <- as.character(gsub("pythondir=", "", args[pythondir_index])) 
+
+lib.path <- paste(R.dir, "/library/", sep = "")
+.libPaths(lib.path)
+@
+
+Following packages are loaded.
+
+<<set path to package, echo = TRUE>>=
+library(rtracklayer)
+library(GenomicRanges)
+library(ShortRead)
+library(ggplot2)
+@
+
+<<source R codes, echo = FALSE>>=
+sourceDir <- function(path, trace = TRUE, ...) {
+  for (nm in list.files(path, pattern = "\\.[RrSsQq]$")) {
+    source(file.path(path, nm), ...)
+  }
+}
+
+S4dir <- paste(hiCLIP.dir, "/R/S4", sep = "")
+sourceDir(S4dir)
+
+functions.dir <- paste(hiCLIP.dir, "/R/functions", sep = "")
+sourceDir(functions.dir)
+
+set.seed(1)
+@
+
+\section{Comparison of the non-hybrid reads and duplexes identified by the hybrid reads.}
+
+Around the duplexes identified by the hybrid reads, the enrichment of non-hybrid reads compared to the random permutation control was examined. 
+
+<<Set directories, echo=FALSE>>=
+input.dir <- paste(hiCLIP.dir, "/results/mapping/hiCLIP/nonHybrid/bed", sep = "")
+mergedBed.dir <- paste(hiCLIP.dir, "/results/mapping/hiCLIP/nonHybrid/mergedBed", sep = "")
+dir.create(mergedBed.dir, showWarnings = FALSE)
+mergedBed.file <- paste(hiCLIP.dir, "/results/mapping/hiCLIP/nonHybrid/mergedBed/nonHybrid_merged.bed", sep = "")
+mergedBed.file.gz <- paste(mergedBed.file, ".gz", sep = "")
+
+gr.tc.longest.mRNA.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/gr_tc_longest_mRNA.Rdata", sep = "")
+@
+
+First, non-hybrid data of the 3 experiments (low-RNase, high-RNase, and ligation minus control) were merged.
+
+<<Merge non-hybrid data, echo=TRUE>>=
+runMerge(input.dir, mergedBed.file, pattern.file = "_collapsed.bed$")
+@
+
+Next, the data necessary for the analysis were loaded.
+
+<<Load necessary files, echo=TRUE>>=
+load(gr.tc.longest.mRNA.Rdata)
+
+iCLIP <- import_nonHybrid(mergedBed.file.gz)
+@
+
+The enrichment of non-hybrid reads around the all identified duplexes are examined.
+
+<<Set directory for single reads, echo=FALSE>>=
+all.collapsed.duplex.hgrL.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/all.collapsed.duplex.hgrL.Rdata", sep = "")
+@
+
+
+<<Load necessary files for single reads extraction, echo=TRUE>>=
+load(all.collapsed.duplex.hgrL.Rdata)
+@
+
+The enrichment of non-hybrid reads around the all duplexes are examined.
+<<single_duplex_iCLIP, echo=TRUE, fig=TRUE, include=FALSE, width=7, height=3.5>>=
+compareHybridvsiCLIP(iCLIP, 
+                     duplex = all.collapsed.duplex.hgrL, 
+                     gtf = gr.tc.longest.mRNA,
+                     rep.num = 10,
+                     y.axis.lim = 500)
+@
+
+\begin{figure}[htbt]
+\centering
+\includegraphics[width=1\linewidth]{hiCLIP_data_analysis_4-single_duplex_iCLIP}
+\caption{The comparison of non-hybrid reads and all the duplexes identified by hybrid reads.}
+\label{fig:single_duplex_iCLIP}
+\end{figure}
+
+Finally, the number of non-hybrid reads, where the cross-link sites located close to the duplexes, was examined.
+
+<<Report the number of non-hybrid reads, echo=TRUE>>=
+nonhybridCountOnDuplex(
+  all.collapsed.duplex.hgrL, 
+  iCLIP, 
+  70, 
+  0
+  )
+@
+
+\section{Session Info}
+<<sessinInfo, results=tex, echo=FALSE>>=
+toLatex(sessionInfo())
+
+proc.time() - ptm
+@
+
+\end{document}

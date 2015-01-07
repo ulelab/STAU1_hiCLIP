@@ -1,0 +1,303 @@
+%\VignetteIndexEntry{Preprocessing data Vignette}
+%\VignetteKeyword{high-throughput DNA sequncing}
+%\VignetteKeyword{RNA structures}
+%\VignettePackage{preprocessing_data}
+\documentclass[12pt]{article}
+\usepackage{hyperref}
+\usepackage{url}
+
+\newcommand{\textprime}{\textsuperscript{\ensuremath{\prime}}}
+
+\textwidth=6.2in
+\textheight=8.5in
+\oddsidemargin=0.2in
+\evensidemargin=0.2in
+\headheight=0in
+\headsep=0in
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+\title{Appendix 1/12}
+%\author{Yoichiro Sugimoto and Jernej Ule}
+\date{\today}
+\maketitle
+
+The appendix 1 downloads and constructs sequences of transcripts used for high-throughput DNA sequencing data mapping.
+
+\tableofcontents
+
+\section{Overview}
+Analysis of hiCLIP data requires extensive processing of data. 
+In order to facilitate the broad application of hiCLIP technique, we implemented the analysis pipeline as an open-source package that enables the user to reproduce all plots and results of the manuscript by using the sequence data as input. 
+The appendix documents download all essential annotation files such as annotation of transcripts and genome, perform pre-processing of the data and actual analysis of hiCLIP and associated ribosome profiling and mRNA-Seq data. 
+In order to run these documents, the user has to download raw sequence files and their barcodes, and the required software. For details, please refer README.md document in the STAU1\_hiCLIP package available at "TO DO upon publication".
+
+\section{Nomenclature of R objects}
+
+    \begin{tabular}{rrr}
+      \hline 
+      gr. &   GRanges object \\
+      grL. &   GRangesList object \\
+      sr. &   ShortRead object \\
+      \hline
+      tc.  &   Transcriptomic coordinate \\
+      \hline
+    \end{tabular}
+
+\section{Phase 1: Mapping to rRNAs and tRNAs}
+Sequences of rRNAs (RefSeq id, \href{http://www.ncbi.nlm.nih.gov/nuccore/189571609?report=fasta}{NR\_023363.1}, \href{http://www.ncbi.nlm.nih.gov/nuccore/142372596?report=fasta}{NR\_003285.2}, \href{http://www.ncbi.nlm.nih.gov/nuccore/225637499?report=fasta}{NR\_003287.2}, and \href{http://www.ncbi.nlm.nih.gov/nuccore/225637497?report=fasta}{NR\_003286.2}) are downloaded from \texttt{NCBI nucleotide}. 
+
+The sequences of tRNAs are downloaded from Genomic tRNA Database (\url{http://gtrnadb.ucsc.edu}). 
+
+<<Setting directory, echo=FALSE>>=
+ptm <- proc.time()
+options(width=60)
+args <- commandArgs(trailingOnly = TRUE) 
+hiCLIP_index <- grepl("hiCLIPdir=", args) 
+hiCLIP.dir <- as.character(gsub("hiCLIPdir=", "", args[hiCLIP_index])) 
+Rdir_index <- grepl("Rdir=", args) 
+R.dir <- as.character(gsub("Rdir=", "", args[Rdir_index])) 
+pythondir_index <- grepl("pythondir=", args) 
+python.dir <- as.character(gsub("pythondir=", "", args[pythondir_index])) 
+
+lib.path <- paste(R.dir, "/library/", sep = "")
+.libPaths(lib.path)
+@
+
+<<initialization of directories, echo=FALSE>>=
+data.processed.dir <- paste(hiCLIP.dir, "/data/processed", sep = "")
+data.unprocessed.dir <- paste(hiCLIP.dir, "/data/unprocessed", sep = "")
+
+data.dir.lists <- c("bowtie_index", "fasta", "gtf", "Rdata", "sam", "annotation")
+
+unlink(paste(data.processed.dir, data.dir.lists, sep = "/"), recursive = TRUE)
+unlink(paste(data.unprocessed.dir, data.dir.lists, sep = "/"), recursive = TRUE)
+
+dirs.create <- function(paths){
+  for(dir in paths){
+    dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+  }
+}
+
+dirs.create(paste(data.processed.dir, data.dir.lists, sep = "/"))
+dirs.create(paste(data.unprocessed.dir, data.dir.lists, sep = "/"))
+@
+
+<<Download rRNA and tRNA sequence, echo=FALSE>>=
+ncbi.nuc <- "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nucleotide&rettype=fasta&retmode=text&id=NR_023363.1,NR_003285.2,NR_003287.2,NR_003286.2"
+rRNA.fa.file <- paste(hiCLIP.dir, "/data/unprocessed/fasta/rRNA.fa", sep = "")
+temp.rRNA.fa.file <- paste(hiCLIP.dir, "/data/unprocessed/fasta/temp.rRNA.fa", sep = "")
+download.file(ncbi.nuc, destfile = temp.rRNA.fa.file )
+
+# the gene bank id is too long, so rename them
+sed.rRNA.command <- paste("sed 's/gi|189571609.*/rRNA_5S/;s/gi|142372596.*/rRNA_5.8S/;s/gi|225637499.*/rRNA_28S/;s/gi|225637497.*/rRNA_18S/'", temp.rRNA.fa.file, ">", rRNA.fa.file, sep = " ")
+system(sed.rRNA.command)
+unlink(temp.rRNA.fa.file)
+
+tRNA.db <- "http://gtrnadb.ucsc.edu/download/tRNAs/eukaryotic-tRNAs.fa.gz"
+eukaryotic_tRNAs.fa.gz <- paste(hiCLIP.dir, "/data/unprocessed/fasta/eukaryotic-trnas.fa.gz", sep = "")
+eukaryotic_tRNAs.fa.file <- paste(hiCLIP.dir, "/data/unprocessed/fasta/eukaryotic-trnas.fa", sep = "")
+download.file(tRNA.db, destfile = eukaryotic_tRNAs.fa.gz)
+tRNA.gunzip.command <- paste("gunzip", eukaryotic_tRNAs.fa.gz)
+system(tRNA.gunzip.command)
+
+hs.tRNA.CCA.fa.file <- paste(hiCLIP.dir, "/data/unprocessed/fasta/hs.trnas.CCA.fa", sep = "")
+@
+
+tRNAs with names starting with Homo\_sapiens are selected and CCA is added to the 3\textprime\ end of the sequences.
+
+<<tRNA_formatting, echo=TRUE, keep.source=FALSE>>=
+library(ShortRead)
+tRNA <- readFasta(eukaryotic_tRNAs.fa.file)
+hs.tRNA <- tRNA[grep("^Homo_sapiens", id(tRNA))]
+
+id.s <- strsplit(as.character(id(hs.tRNA)), "\\.|-|\\s|\\?")
+id.short <- paste(sapply(id.s, "[[", 2), sapply(id.s, "[[", 3), 1:length(id.s),sep = "_")
+id.short <- gsub("\\(e\\)", "", id.short)
+
+hs.tRNA.CCA <- ShortRead(sread = DNAStringSet(paste(sread(hs.tRNA), "CCA", sep = "")), 
+  							id = BStringSet(id.short)
+								)
+
+writeFasta(hs.tRNA.CCA, hs.tRNA.CCA.fa.file)
+@
+
+Finally, these fasta files are merged and used for Phase 1 mapping.
+
+<<Merge rRNAs and tRNAs file, echo=FALSE>>=
+rRNA.tRNA.fa.file <- paste(hiCLIP.dir, "/data/unprocessed/fasta/hs_rRNAs_and_tRNAs.fa", sep = "")
+merge.r.tRNAs.commad <- paste("cat", rRNA.fa.file, hs.tRNA.CCA.fa.file, ">", rRNA.tRNA.fa.file, sep = " ")
+system(merge.r.tRNAs.commad)
+@
+
+\section{Phase 2: Mapping to mtDNA and pre-rRNA}
+Mitochondrial genome and a pre rRNA (RefSeq id, Mitochondrial genome: AF\_347015.1 and pre-rRNA: NR\_046235.1) are downloaded from \texttt{NCBI nucleotide} and used for Phase 2 mapping. 
+
+<<Download mtGenome and pre-rRNA sequence, echo=FALSE>>=
+ncbi.nuc.chrM.pre_rRNA <- "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nucleotide&rettype=fasta&retmode=text&id=AF347015.1,NR_046235.1"
+chrM.pre_rRNA.fa.file <- paste(hiCLIP.dir, "/data/unprocessed/fasta/chrM_pre_rRNA.fa", sep = "")
+temp.chrM.pre_rRNA.fa.file <- paste(hiCLIP.dir, "/data/unprocessed/fasta/temp_chrM_pre_rRNA.fa", sep = "")
+download.file(ncbi.nuc.chrM.pre_rRNA, destfile = temp.chrM.pre_rRNA.fa.file)
+
+# the gene bank id is too long, so rename them
+sed.chrM.pre_rRNA.command <- paste("sed 's/gi|13273284.*/chrM/;s/gi|374429547.*/pre_rRNA45S/'", temp.chrM.pre_rRNA.fa.file, ">", chrM.pre_rRNA.fa.file, sep = " ")
+system(sed.chrM.pre_rRNA.command)
+unlink(temp.chrM.pre_rRNA.fa.file)
+@
+
+\section{Phase 3: Mapping to representative transcripts}
+Representative set of transcripts is constructed from transcript data that is downloaded from ENSEMBL 67 (\url{http://may2012.archive.ENSEMBL.org/index.html}). The longest transcript in each gene is used as a representative transcript.
+
+<<Set paths, echo=FALSE>>=
+gtf.gz.file <- paste(hiCLIP.dir, "/data/unprocessed/gtf/Homo_sapiens.GRCh37.67.gtf.gz", sep = "")
+gtf.file <- paste(hiCLIP.dir, "/data/unprocessed/gtf/Homo_sapiens.GRCh37.67.gtf", sep = "")
+c.gtf.file <- paste(hiCLIP.dir, "/data/unprocessed/gtf/chr_Homo_sapiens.GRCh37.67.gtf", sep = "")
+download.file("ftp://ftp.ensembl.org/pub/release-67/gtf/homo_sapiens/Homo_sapiens.GRCh37.67.gtf.gz", destfile = gtf.gz.file)
+
+unzip_command <- paste("gunzip -f", gtf.gz.file, sep = " ")
+system(unzip_command)
+
+chr_command <- paste("awk '{print \"chr\"$0}'", gtf.file, ">", c.gtf.file, sep = " ")
+system(chr_command)
+
+file.rename(c.gtf.file, gtf.file)
+
+gtf <- read.table(gtf.file, sep = "\t")
+# line number should be 2246578.
+convChr <- c(paste("chr", 1:22, sep = ""), "chrX", "chrY")
+gtf <- gtf[(gtf[, 1] %in% convChr), ]
+write.table(gtf, gtf.file, quote=FALSE, col.names=FALSE, row.names=FALSE, sep="\t")
+
+mRNA.gtf <- gtf[(gtf[, 2] %in% "protein_coding"), ]
+mRNA.gtf.file <- paste(hiCLIP.dir, "/data/unprocessed/gtf/Homo_sapiens.GRCh37.67_mRNAs.gtf", sep = "")
+write.table(mRNA.gtf, mRNA.gtf.file, quote=FALSE, col.names=FALSE, row.names=FALSE, sep="\t")
+@
+
+<<source functions and set paths, echo=FALSE>>=
+longest.ensemble.transcript.ids <- paste(hiCLIP.dir, "/data/unprocessed/gtf/longest.ensemble.transcript.ids.txt", sep = "")
+
+longest.mRNA.gtf.file <- paste(hiCLIP.dir, "/data/unprocessed/gtf/Homo_sapiens.GRCh37.67_longest_mRNAs.gtf", sep = "")
+
+ncRNA.gtf.file <- paste(hiCLIP.dir, "/data/unprocessed/gtf/Homo_sapiens.GRCh37.67_ncRNAs.gtf", sep = "")
+longest.ncRNA.gtf.file <- paste(hiCLIP.dir, "/data/unprocessed/gtf/Homo_sapiens.GRCh37.67_longest_ncRNAs.gtf", sep = "")
+
+longest.gene.gtf.file <- paste(hiCLIP.dir, "/data/unprocessed/gtf/Homo_sapiens.GRCh37.67_longest_mRNAs_and_ncRNAs.gtf", sep = "")
+
+source(paste(hiCLIP.dir, "/R/pre_processing/i0_1_preprocessing_data_functions.R", sep = ""))
+@
+
+For each gene, the protein-coding transcripts and longest transcripts are prioritized over others.
+
+<<Select longest mRNAs and ncRNAs, echo = TRUE, keep.source=FALSE>>=
+gr.longest.mRNA.list <- selectLongestGenes(mRNA.gtf.file)
+
+gr.longest.mRNA <- gr.longest.mRNA.list$GR
+write.GTF(gr.longest.mRNA, longest.mRNA.gtf.file)
+
+gr.longest.mRNA.tid.df <- gr.longest.mRNA.list$id.df
+write.table(gr.longest.mRNA.tid.df, longest.ensemble.transcript.ids, quote = FALSE, sep = "\t", row.names = FALSE, col.names = TRUE)
+
+
+mRNA.genes <- unique(as.character(elementMetadata(gr.longest.mRNA)$gene_id))
+
+gr.all <- loadGTF(gtf.file)
+gr.ncRNA <- gr.all[!(as.character(elementMetadata(gr.all)$gene_id) %in% mRNA.genes)]
+write.GTF(gr.ncRNA, ncRNA.gtf.file)
+
+gr.longest.ncRNA <- selectLongestGenes(ncRNA.gtf.file)$GR
+write.GTF(gr.longest.ncRNA, longest.ncRNA.gtf.file)
+
+gr.longest.gene <- c(gr.longest.mRNA, gr.longest.ncRNA)
+gr.longest.gene <- sort(gr.longest.gene)
+gr.longest.gene <- gr.longest.gene[order(
+  						as.character(seqnames(gr.longest.gene)),
+							as.character(elementMetadata(gr.longest.gene)$gene_id)
+							)]
+
+write.GTF(gr.longest.gene, longest.gene.gtf.file)
+@
+
+<<Paths for compiling transcript fasta, echo=FALSE>>=
+source(paste(hiCLIP.dir, "/R/pre_processing/i0_2_generate_fasta_from_gtf.R", sep = ""))
+gr.longest.mRNA.Rdata <- paste(hiCLIP.dir, "/data/unprocessed/Rdata/gr_longest_mRNA.Rdata", sep = "")
+gr.longest.ncRNA.Rdata <- paste(hiCLIP.dir, "/data/unprocessed/Rdata/gr_longest_ncRNA.Rdata", sep = "")
+longest.mRNA.seq.fasta <- paste(hiCLIP.dir, "/data/unprocessed/fasta/longest_mRNA.fa", sep = "")
+longest.ncRNA.seq.fasta <- paste(hiCLIP.dir, "/data/unprocessed/fasta/longest_ncRNA.fa", sep = "")
+longest.gene.fasta <- paste(hiCLIP.dir, "/data/processed/fasta/longest_mRNA_and_ncRNA.fa", sep = "")
+@
+
+
+<<Compiling representative transcript sets, echo=TRUE, keep.source=FALSE>>=
+
+library('BSgenome.Hsapiens.UCSC.hg19')
+
+grL.longest.mRNA <- read.GTF(longest.mRNA.gtf.file)
+gr.longest.mRNA <- grLToGr(grL.longest.mRNA, annot.selected = "mature")
+save(gr.longest.mRNA, file = gr.longest.mRNA.Rdata)
+longest.mRNA.seq <- obtainSeqGr(gr.longest.mRNA)
+
+sr.longest.mRNA <- ShortRead(sread = DNAStringSet(longest.mRNA.seq), id = BStringSet(names(longest.mRNA.seq)))
+
+writeFasta(sr.longest.mRNA, longest.mRNA.seq.fasta)
+
+# fasta of non-protein-coding genes
+gr.longest.ncRNA <- read.ncRNA.GTF(longest.ncRNA.gtf.file)
+save(gr.longest.ncRNA, file = gr.longest.ncRNA.Rdata)
+longest.ncRNA.seq <- obtainSeqGr(gr.longest.ncRNA)
+
+sr.longest.ncRNA <- ShortRead(sread = DNAStringSet(longest.ncRNA.seq), id = BStringSet(names(longest.ncRNA.seq)))
+
+writeFasta(sr.longest.ncRNA, longest.ncRNA.seq.fasta)
+
+cat_m_nc_fa <- paste("cat", longest.mRNA.seq.fasta, longest.ncRNA.seq.fasta, ">", longest.gene.fasta, sep = " ")
+system(cat_m_nc_fa)
+
+@
+
+\section{Phase 4: Mapping to genome}
+Bowtie index for human genome is downloaded from the bowtie website (\url{http://bowtie-bio.sourceforge.net/index.shtml}).
+<<Download hg19 bowtie index, echo=FALSE>>=
+hg19.bowtie.index.zip.file <- paste(hiCLIP.dir, "/data/processed/bowtie_index/hg19.ebwt.zip", sep = "")
+hg19.bowtie.index.file <- paste(hiCLIP.dir, "/data/processed/bowtie_index/hg19", sep = "")
+dir.create(hg19.bowtie.index.file, showWarnings = FALSE)
+
+download.file("ftp://ftp.ccb.jhu.edu/pub/data/bowtie_indexes/hg19.ebwt.zip", destfile = hg19.bowtie.index.zip.file)
+
+unzip_hg19.zip.command <- paste("unzip", hg19.bowtie.index.zip.file, "-d", hg19.bowtie.index.file, sep = " ")
+system(unzip_hg19.zip.command)
+unlink(hg19.bowtie.index.zip.file)
+@
+
+\section{Index fasta files for bowtie mapping}
+The fasta files created in this document are indexed for bowtie mapping.
+
+<<Index fasta files with bowtie, echo=FALSE, results=hide>>=
+bowtie.index.hsr.tRNA.dir <- paste(hiCLIP.dir, "/data/processed/bowtie_index/hs_rRNAs_and_tRNAs", sep = "")
+bowtie.index.chrM.pre_rRNA.dir <- paste(hiCLIP.dir, "/data/processed/bowtie_index/chrM_pre_rRNA", sep = "")
+bowtie.index.longest_m.ncRNA.dir <- paste(hiCLIP.dir, "/data/processed/bowtie_index/longest_mRNA_and_ncRNA", sep = "")
+
+dir.create(bowtie.index.hsr.tRNA.dir, showWarnings = FALSE)
+dir.create(bowtie.index.chrM.pre_rRNA.dir, showWarnings = FALSE)
+dir.create(bowtie.index.longest_m.ncRNA.dir, showWarnings = FALSE)
+
+bowtie.index.command <- paste(hiCLIP.dir, "/inst/bin/bowtie-0.12.7/bowtie-build", sep = "")
+
+index.hs.r.tRNA.command <- paste(bowtie.index.command, rRNA.tRNA.fa.file, paste(bowtie.index.hsr.tRNA.dir, "/hs_rRNAs_and_tRNAs", sep = ""), sep = " ")
+index.hs.chrM.pre_rRNA.command <- paste(bowtie.index.command, chrM.pre_rRNA.fa.file, paste(bowtie.index.chrM.pre_rRNA.dir, "/chrM_pre_rRNA", sep = ""), sep = " ")
+index.hs.longest_m.ncRNA.command <- paste(bowtie.index.command, longest.gene.fasta, paste(bowtie.index.longest_m.ncRNA.dir, "/longest_mRNA_and_ncRNA", sep = ""), sep = " ")
+
+system(index.hs.r.tRNA.command)
+system(index.hs.chrM.pre_rRNA.command)
+system(index.hs.longest_m.ncRNA.command)
+@
+
+\section{SessionInfo}
+
+<<sessinInfo, results=tex, echo=FALSE>>=
+toLatex(sessionInfo())
+
+proc.time() - ptm
+@
+
+\end{document}

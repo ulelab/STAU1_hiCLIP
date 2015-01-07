@@ -1,0 +1,152 @@
+%\VignetteIndexEntry{hiCLIP_data_analysis_5 Vignette}
+%\VignetteKeyword{high-throughput DNA sequncing}
+%\VignetteKeyword{RNA structures}
+%\VignettePackage{hiCLIP_data_analysis_5}
+\documentclass[12pt]{article}
+\usepackage{hyperref}
+\usepackage{url}
+
+\newcommand{\textprime}{\textsuperscript{\ensuremath{\prime}}}
+
+\textwidth=6.2in
+\textheight=8.5in
+\oddsidemargin=0.2in
+\evensidemargin=0.2in
+\headheight=0in
+\headsep=0in
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+\title{Appendix 8/12}
+%\author{Yoichiro Sugimoto and Jernej Ule}
+\date{\today}
+\maketitle
+
+The enrichment of STAU1 hiCLIP non-hybrid reads for the cytoplasmic fraction, STAU1 iCLIP for total fraction of the cells, hnRNP C iCLIP mapped to Alu repeat elements compared to mRNA-Seq was examined.
+
+\tableofcontents
+
+\section{Packages used}
+
+<<Setting directory, echo=FALSE>>=
+ptm <- proc.time()
+
+options(width=60)
+
+args <- commandArgs(trailingOnly = TRUE) 
+hiCLIP_index <- grepl("hiCLIPdir=", args) 
+hiCLIP.dir <- as.character(gsub("hiCLIPdir=", "", args[hiCLIP_index])) 
+Rdir_index <- grepl("Rdir=", args) 
+R.dir <- as.character(gsub("Rdir=", "", args[Rdir_index])) 
+pythondir_index <- grepl("pythondir=", args) 
+python.dir <- as.character(gsub("pythondir=", "", args[pythondir_index])) 
+
+lib.path <- paste(R.dir, "/library/", sep = "")
+.libPaths(lib.path)
+
+@
+
+Following packages are loaded.
+
+<<set path to package, echo = TRUE>>=
+library(ggplot2)
+library(GenomicRanges)
+library(ShortRead)
+@
+
+<<Necessary directories, echo=FALSE>>=
+sourceDir <- function(path, trace = TRUE, ...) {
+  for (nm in list.files(path, pattern = "\\.[RrSsQq]$")) {
+    source(file.path(path, nm), ...)
+  }
+}
+
+S4dir <- paste(hiCLIP.dir, "/R/S4", sep = "")
+sourceDir(S4dir)
+@
+
+
+\section{Enrichment of the STAU1 hiCLIP non-hybrid reads on Alu repeat elements.}
+
+The importance of Alu repeat elements for recruiting STAU1 is further examined.
+
+<<Set directories, echo=FALSE>>=
+STAU1_nonhybrid_REE.file <- paste(hiCLIP.dir, "/inst/REE_out/STAU1_nonhybrid_vs_mRNASeq_repenr.std.csv", sep = "")
+STAU1_total_iCLIP_REE.file <- paste(hiCLIP.dir, "/inst/REE_out/STAU1_totaliCLIP_vs_mRNASeq_repenr.std.csv", sep = "")
+hnRNPc_iCLIP_REE.file <- paste(hiCLIP.dir, "/inst/REE_out/hnRNPc_iCLIP_vs_mRNASeq_repenr.std.csv", sep = "")
+@
+
+The following function was used to load the Repeat Enrichment Estimator results.
+
+<<Loading function, echo=TRUE>>=
+read.REE.file <- function(filename, prefix){
+  df <- read.table(filename, 
+                   skip = 2, 
+                   sep = ",", 
+                   header = TRUE, 
+                   row.names = 1)
+  
+  df <- df[
+    (df$nChIP > sum(df$nChIP) * 0.00001) & 
+      (df$nInput > sum(df$nInput) * 0.00001), 
+    ]
+  
+  Alu.indexes <- c(grep("^Alu", rownames(df)), 
+                 grep("^FRAM$", rownames(df)),
+                 grep("^FLAM_A$", rownames(df)),
+                 grep("^FAM$", rownames(df))
+                 )
+  
+  df$Alu.bin <- "Others"
+  df$Alu.bin[Alu.indexes] <- "Alu"
+  
+  p <- ggplot() + 
+    geom_histogram(data = df[df$Alu.bin != "Alu", ], aes(x = ce), alpha = 0.4, binwidth = 0.25, fill = "black") + 
+    geom_histogram(data = df[df$Alu.bin == "Alu", ], aes(x = ce), fill = "red", alpha = 0.7, binwidth = 0.25, col = "black") + 
+    coord_cartesian(xlim = c(-5, 5)) + 
+    labs(title = prefix)
+  
+  p2 <- ggplot() + 
+    geom_boxplot(data = df, aes(x = Alu.bin, y = ce, fill = Alu.bin), alpha = 0.3, outlier.shape = NA) + 
+    theme(legend.position="none") + 
+    coord_flip(ylim = c(-5, 5))
+  
+  colnames(df) <- paste(prefix, 
+                        colnames(df), 
+                        sep = "_")
+  
+  plot.list <- list(a = p, b = p2)
+  
+  return(plot.list)
+}
+@
+
+
+Enrichment of the STAU1 hiCLIP non-hybrid reads on Alu repeat elements compared to mRNA-Seq reads was examined.
+In order to understand the specificity of STAU1 in the different fraction of cells, the enrichment of STAU1 iCLIP for the total fraction of cells was examined.
+Since hnRNP C protein is known to bind to Alu repeat elements, the enrichment for Alu element was also examined.
+
+<<REE_analysis, echo=TRUE, fig=TRUE, include=FALSE, width=7, height=4.7>>=
+STAU1_non_hybrid <- read.REE.file(STAU1_nonhybrid_REE.file, "STAU1_non_hybrid")
+STAU1_iCLIP <- read.REE.file(STAU1_total_iCLIP_REE.file, "STAU1_total_iCLIP")
+hnRNPC_iCLIP <- read.REE.file(hnRNPc_iCLIP_REE.file, "hnRNPC")
+
+multiplot(STAU1_non_hybrid$a, STAU1_non_hybrid$b, STAU1_iCLIP$a, STAU1_iCLIP$b, hnRNPC_iCLIP$a, hnRNPC_iCLIP$b, cols = 3)
+@
+
+\begin{figure}[htbt]
+\centering
+\includegraphics[width=1\linewidth]{hiCLIP_data_analysis_5-REE_analysis}
+\caption{The association of Alu repeat elements and STAU1 binding}
+\label{fig:REE_analysis}
+\end{figure}
+
+\section{Session Info}
+<<sessinInfo, results=tex, echo=FALSE>>=
+toLatex(sessionInfo())
+
+proc.time() - ptm
+@
+
+\end{document}

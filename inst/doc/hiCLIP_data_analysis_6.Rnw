@@ -1,0 +1,281 @@
+%\VignetteIndexEntry{hiCLIP_data_analysis_6 Vignette}
+%\VignetteKeyword{high-throughput DNA sequncing}
+%\VignetteKeyword{RNA structures}
+%\VignettePackage{hiCLIP_data_analysis_6}
+\documentclass[12pt]{article}
+\usepackage{hyperref}
+\usepackage{url}
+
+\newcommand{\textprime}{\textsuperscript{\ensuremath{\prime}}}
+
+\textwidth=6.2in
+\textheight=8.5in
+\oddsidemargin=0.2in
+\evensidemargin=0.2in
+\headheight=0in
+\headsep=0in
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+\title{Appendix 9/12}
+%\author{Yoichiro Sugimoto and Jernej Ule}
+\date{\today}
+\maketitle
+
+The appendix 9 performs integrated data analysis from hiCLIP, mRNA-Seq and ribosome profiling.
+
+\tableofcontents
+
+\section{Packages used}
+
+<<Setting directory, echo=FALSE>>=
+ptm <- proc.time()
+
+options(width=60)
+args <- commandArgs(trailingOnly = TRUE) 
+hiCLIP_index <- grepl("hiCLIPdir=", args) 
+hiCLIP.dir <- as.character(gsub("hiCLIPdir=", "", args[hiCLIP_index])) 
+Rdir_index <- grepl("Rdir=", args) 
+R.dir <- as.character(gsub("Rdir=", "", args[Rdir_index])) 
+pythondir_index <- grepl("pythondir=", args) 
+python.dir <- as.character(gsub("pythondir=", "", args[pythondir_index])) 
+
+lib.path <- paste(R.dir, "/library/", sep = "")
+.libPaths(lib.path)
+@
+
+Following packages are loaded.
+<<set path to package, echo = TRUE>>=
+library(reshape2)
+library(plyr)
+library(GenomicRanges)
+library(ShortRead)
+library(ggplot2)
+@
+
+<<source R codes, echo = FALSE>>=
+sourceDir <- function(path, trace = TRUE, ...) {
+    for (nm in list.files(path, pattern = "\\.[RrSsQq]$")) {
+       source(file.path(path, nm), ...)
+    }
+}
+
+S4dir <- paste(hiCLIP.dir, "/R/S4", sep = "")
+sourceDir(S4dir)
+
+functions.dir <- paste(hiCLIP.dir, "/R/functions", sep = "")
+sourceDir(functions.dir)
+
+options("scipen"=-2, "digits"=4, "useDingbats"=FALSE)
+@
+
+\section{RNA structures and translational efficiency}
+
+The relationship between RNA structures and translational efficiency are analyzed.
+
+<<Set directory for translation vs range, echo=FALSE>>=
+out.master.df.file <- paste(hiCLIP.dir, "/results/manuscript/master_table.tab", sep = "")
+all.duplex.range.file <- paste(hiCLIP.dir, "/results/manuscript/range/all/range_summary.tab", sep = "")
+@
+
+<<Translation_vs_range, echo=TRUE, fig=TRUE, include=FALSE>>=
+master.df <- read.table(
+  out.master.df.file, 
+  header = TRUE, 
+  stringsAsFactors = FALSE, 
+  sep = "\t"
+  )
+
+all.range.df <- read.table(
+  all.duplex.range.file, 
+  header = TRUE, 
+  stringsAsFactors = FALSE, 
+  sep = "\t"
+  )
+
+trln.master.df <- master.df[!is.na(master.df$trln.eff.log2), ]
+trln.master.df <- trln.master.df[
+  !(1:nrow(trln.master.df) 
+    %in% 
+      grep("^HIST", trln.master.df$hgnc_symbol)), ]
+trln.vec <- trln.master.df$trln.eff.log2
+names(trln.vec) <- as.character(trln.master.df$gene_id)
+
+all.range.df$trln.eff.log2 <- trln.vec[all.range.df$gene_id]
+all.range.df <- all.range.df[
+  !is.na(all.range.df$trln.eff.log2), ]
+
+ggplot() + geom_density(
+  data = trln.master.df, 
+  aes(x = trln.eff.log2), 
+  fill = "green", alpha = 0.3
+  ) + 
+  geom_density(
+    data = all.range.df, 
+    aes(x = trln.eff.log2, fill = annot), 
+    alpha = 0.3
+    )
+
+print(paste(
+  "The number of total mRNAs", 
+  nrow(trln.master.df))
+      )
+print(paste(
+  "The number of hybrid reads in utr3", 
+  length(all.range.df$trln.eff.log2[all.range.df$annot == "utr3"]))
+      )
+print(paste(
+  "From", 
+  length(unique(all.range.df$gene_id[all.range.df$annot =="utr3"])),
+  "mRNAs for 3'UTR")
+      )
+
+print(paste(
+  "The number of hybrid reads in CDS", 
+  length(all.range.df$trln.eff.log2[all.range.df$annot == "CDS"]))
+      )
+print(paste(
+  "From", 
+  length(unique(all.range.df$gene_id[all.range.df$annot =="CDS"])), 
+  "mRNAs for CDS")
+      )
+
+print("translational efficiency with hybrid in utr3 vs all mRNAs")
+wil.out2 <- wilcox.test(
+  all.range.df$trln.eff.log2[all.range.df$annot == "utr3"], 
+  trln.master.df$trln.eff.log2
+  )
+
+print(paste("The p-value for the comparison is:", 
+            wil.out2$p.val))
+
+print("translational efficiency with hybrid in CDS vs all mRNAs")
+wil.out3 <- wilcox.test(
+  all.range.df$trln.eff.log2[all.range.df$annot == "CDS"], 
+  trln.master.df$trln.eff.log2
+  )
+
+print(paste("The p-value for the comparison is:", 
+            wil.out3$p.val))
+
+@
+
+\begin{figure}[htbt]
+\centering
+\includegraphics[width=.6\linewidth]{hiCLIP_data_analysis_6-Translation_vs_range}
+\caption{Translational efficiency and RNA structures}
+\label{fig:Translation_vs_range}
+\end{figure}
+
+
+\section{The range of RNA structure in the 3\textprime\ UTR}
+
+In order to study the long-range RNA structures, the range of RNA structures in 3\textprime\ is further analyzed.
+
+The following function was used for the analysis.
+
+<<Function for the range analysis, echo=TRUE>>=
+analyzeRanges <- function(duplex.range.file){
+  
+  duplex.range <- read.table(
+    duplex.range.file, 
+    header = TRUE, 
+  	stringsAsFactors = FALSE, 
+  	sep = "\t"
+  	)
+
+  duplex.range <- duplex.range[
+    duplex.range$annot == "utr3", 
+    ]
+  
+  mes1 <- paste("In total",
+                nrow(duplex.range),
+                " structures in",
+                length(unique(duplex.range$gene_id)),
+                "different mRNAs' 3' UTRs are analyzed."
+                )
+  
+  mes2 <- paste(100 * sum(duplex.range$distance > 100) / nrow(duplex.range),
+                "% of structures have a range longer than 100 nts"
+                )
+  
+  mes3 <- paste(100 * sum(duplex.range$distance > 500) / nrow(duplex.range),
+                "% of structures have a range longer than 500 nts"
+                )
+  
+  mes4 <- paste(100 * sum(duplex.range$distance > 1000) / nrow(duplex.range),
+                "% of structures have a range longer than 1000 nts"
+                )
+  
+  cat(paste(mes1, mes2, mes3, mes4, "\n", sep = "\n"))
+
+  duplex.range <- ddply(
+    duplex.range,
+    .(annot),transform,
+    ecdf = ecdf(distance)(distance)
+    )
+
+  p <- ggplot(duplex.range) + 
+    geom_line(aes(x = log(distance, 10), y = 1 - ecdf)) + 
+    scale_x_reverse()
+    
+  return(p) 
+}
+@
+
+
+First, all the structures are examined.
+
+<<Set directories 1, echo=FALSE>>=
+gr.tc.longest.mRNA.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/gr_tc_longest_mRNA.Rdata", sep = "")
+distance.non.redundant.all.dir <- paste(hiCLIP.dir, "/results/manuscript/range/non_redundant_all", sep = "")
+all.collapsed.duplex.hgrL.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/all.collapsed.duplex.hgrL.Rdata", sep = "")
+
+all.collapsed.duplex.range.file <- paste(hiCLIP.dir, "/results/manuscript/range/non_redundant_all/unexpanded_range_summary.tab", sep = "")
+
+longest.gene.fasta <- paste(hiCLIP.dir, "/data/processed/fasta/longest_mRNA_and_ncRNA.fa", sep = "")
+@
+
+<<Load necessary files, echo=TRUE>>=
+load(gr.tc.longest.mRNA.Rdata)
+load(all.collapsed.duplex.hgrL.Rdata)
+
+sr.longest.gene <- readFasta(longest.gene.fasta)
+@
+
+<<Calculate the range of structures for non-redundant all duplexes, echo=TRUE>>=
+readNumber(all.collapsed.duplex.hgrL)
+
+analyzeRNADuplexRangeUnexpanded(
+  all.collapsed.duplex.hgrL, 
+  t.gtf = gr.tc.longest.mRNA, 
+  out.dir =  distance.non.redundant.all.dir, 
+  hiCdir = hiCLIP.dir, 
+  print.flag = FALSE
+  )
+
+
+@
+
+<<RNA_structure_range_utr3_non_redundant_all, echo=TRUE, fig=TRUE, include=FALSE>>=
+
+p1 <- analyzeRanges(all.collapsed.duplex.range.file)
+print(p1)
+@
+
+\begin{figure}[htbt]
+\centering
+\includegraphics[width=.6\linewidth]{hiCLIP_data_analysis_6-RNA_structure_range_utr3_non_redundant_all}
+\caption{The range of all RNA structure in 3\textprime\ UTRs (non redundant set).}
+\label{fig:RNA_structure_range_utr3_non_redundant_all}
+\end{figure}
+
+\section{Session Info}
+<<sessinInfo, results=tex, echo=FALSE>>=
+toLatex(sessionInfo())
+
+proc.time() - ptm
+@
+
+\end{document}

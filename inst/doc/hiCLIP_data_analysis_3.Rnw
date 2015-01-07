@@ -1,0 +1,242 @@
+%\VignetteIndexEntry{hiCLIP_anlaysis2 Vignette}
+%\VignetteKeyword{high-throughput DNA sequncing}
+%\VignetteKeyword{RNA structures}
+%\VignettePackage{hiCLIP_data_analysis_2}
+\documentclass[12pt]{article}
+\usepackage{hyperref}
+\usepackage{url}
+
+\newcommand{\textprime}{\textsuperscript{\ensuremath{\prime}}}
+
+\textwidth=6.2in
+\textheight=8.5in
+\oddsidemargin=0.2in
+\evensidemargin=0.2in
+\headheight=0in
+\headsep=0in
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+\title{Appendix 6/12}
+%\author{Yoichiro Sugimoto and Jernej Ule}
+\date{\today}
+\maketitle
+
+The appendix 6 generates count table of non-hybrid data. The data are compiled into a master table, which also contains essential information of the genes.
+
+\tableofcontents
+
+\section{Package used}
+
+<<Setting directory, echo=FALSE>>=
+ptm <- proc.time()
+options(width=60)
+## As for useDingbats, see http://stackoverflow.com/questions/9992275/ggplot2-pdf-import-in-adobe-illustrator-missing-font-adobepistd for better solution.
+args <- commandArgs(trailingOnly = TRUE) 
+hiCLIP_index <- grepl("hiCLIPdir=", args) 
+hiCLIP.dir <- as.character(gsub("hiCLIPdir=", "", args[hiCLIP_index])) 
+Rdir_index <- grepl("Rdir=", args) 
+R.dir <- as.character(gsub("Rdir=", "", args[Rdir_index])) 
+pythondir_index <- grepl("pythondir=", args) 
+python.dir <- as.character(gsub("pythondir=", "", args[pythondir_index])) 
+
+lib.path <- paste(R.dir, "/library/", sep = "")
+.libPaths(lib.path)
+@
+
+<<test, echo=FALSE>>=
+#hiCLIP.dir <- "/netscr/yoichiro/STAU1_hiCLIP"
+#R.dir <- "~/R-2.15.1"
+#lib.path <- paste(R.dir, "/library/", sep = "")
+#.libPaths(lib.path)
+# , useDingbats = FALSE
+@
+
+Following packages are loaded.
+<<set path to package, echo = TRUE>>=
+library(reshape2)
+library(plyr)
+library(GenomicRanges)
+library(ShortRead)
+library(ggplot2)
+@
+
+<<source R codes, echo = FALSE>>=
+sourceDir <- function(path, trace = TRUE, ...) {
+    for (nm in list.files(path, pattern = "\\.[RrSsQq]$")) {
+       source(file.path(path, nm), ...)
+    }
+}
+
+S4dir <- paste(hiCLIP.dir, "/R/S4", sep = "")
+sourceDir(S4dir)
+
+functions.dir <- paste(hiCLIP.dir, "/R/functions", sep = "")
+sourceDir(functions.dir)
+
+options("scipen"=-2, "digits"=4, "useDingbats"=FALSE)
+@
+
+\section{Generating count table for non hybrid reads}
+Read counts of non hybrid data are calculated as follows.
+
+<<Set directory for count table, echo=FALSE>>=
+gr.tc.longest.mRNA.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/gr_tc_longest_mRNA.Rdata", sep = "")
+annotation.tab.file <- paste(hiCLIP.dir, "/data/processed/annotation/gene_annotations.tab", sep = "")
+
+# Directory of mapped bed like file
+nonHybrid.bed.dir <- paste(hiCLIP.dir, "/results/mapping/hiCLIP/nonHybrid/bed", sep = "")
+nonHybrid.out.pre <- paste(hiCLIP.dir, "/results/mapping/hiCLIP/nonHybrid/countTable/nonHybrid", sep = "")
+dir.create(paste(hiCLIP.dir, "/results/mapping/hiCLIP/nonHybrid/countTable", sep = ""), showWarnings = FALSE, recursive = TRUE)
+@
+
+nonHybrid read count on 3\textprime\ UTR is analyzed.
+
+<<Create count table for nonHybrid, echo=TRUE>>=
+load(gr.tc.longest.mRNA.Rdata)
+
+utr3 <- gr.tc.longest.mRNA[elementMetadata(gr.tc.longest.mRNA)$annot == "utr3"]
+CDS <- gr.tc.longest.mRNA[elementMetadata(gr.tc.longest.mRNA)$annot == "CDS"]
+
+annotation.df <- read.table(
+  annotation.tab.file, 
+  stringsAsFactors = FALSE, 
+  header = TRUE
+  )
+
+mRNA.annotation.df <- annotation.df[
+  annotation.df$category == "protein_coding", ]
+
+nonHybrid.match.pattern <- "\\_collapsed.bed$"
+
+createCountTableUtr3(
+  nonHybrid.bed.dir, 
+  nonHybrid.match.pattern, 
+  nonHybrid.out.pre, 
+  "_utr3_count.txt",
+  mRNA.annotation.df, 
+  utr3
+  )
+
+createCountTableUtr3(
+  nonHybrid.bed.dir, 
+  nonHybrid.match.pattern, 
+  nonHybrid.out.pre, 
+  "_CDS_count.txt",
+  mRNA.annotation.df, 
+  CDS
+  )
+
+@
+
+\section{Normalization of high-throughput DNA sequencing data by DESeq}
+The count data are normalized by \texttt{DESeq} package. 
+
+<<Set directory for normalization of ht data, echo=FALSE>>=
+nonHybrid.utr3.file <- paste(hiCLIP.dir, "/results/mapping/hiCLIP/nonHybrid/countTable/nonHybrid_utr3_count.txt", sep = "")
+nonHybrid.utr3.out <- paste(hiCLIP.dir, "/results/mapping/DESeq/nonHybrid_utr3", sep = "")
+
+nonHybrid.CDS.file <- paste(hiCLIP.dir, "/results/mapping/hiCLIP/nonHybrid/countTable/nonHybrid_CDS_count.txt", sep = "")
+nonHybrid.CDS.out <- paste(hiCLIP.dir, "/results/mapping/DESeq/nonHybrid_CDS", sep = "")
+@
+
+<<Normalization of ht data, echo=TRUE>>=
+RunDESeqNonHybrid(nonHybrid.utr3.file, nonHybrid.utr3.out)
+RunDESeqNonHybrid(nonHybrid.CDS.file, nonHybrid.CDS.out)
+@
+
+<<set path, echo=FALSE>>=
+out.master.df.file <- paste(hiCLIP.dir, "/results/manuscript/master_table.tab", sep = "")
+
+nonHybrid.utr3 <- read.table(paste(hiCLIP.dir, "/results/mapping/DESeq/nonHybrid_utr3_DESeqNormalisedCounts.tab", sep = ""), sep = "\t", header = TRUE, row.names = 1, stringsAsFactors = FALSE)
+nonHybrid.CDS <- read.table(paste(hiCLIP.dir, "/results/mapping/DESeq/nonHybrid_CDS_DESeqNormalisedCounts.tab", sep = ""), sep = "\t", header = TRUE, row.names = 1, stringsAsFactors = FALSE)
+
+robust.expression.df.file <- paste(hiCLIP.dir, "/results/manuscript/ext_master_table.tab", sep = "")
+@
+
+
+\section{Enrichment of non-hybrid reads on STAU1 target genes.}
+The enrichment of non-hybrid reads on each mRNA was calculated for the analysis of STAU1 function.
+
+<<Non_hybrid_enrichment, echo=TRUE, fig=TRUE, include=FALSE>>=
+master.df <- read.table(
+  out.master.df.file, 
+  header = TRUE, 
+  stringsAsFactors = FALSE, 
+  sep = "\t"
+  )
+
+normalizedHT <- function(df){
+  df <- 1000000 * df / mean(colSums(df))
+  # remove STAU1 for later analysis
+  df <- df[!(rownames(df) %in% "ENSG00000124214"), ]
+  return(df)
+}
+
+addNonHybridToMdf <- function(master.df, nonHybrid, column.name = "nonHybrid.utr3"){
+  nonHybrid <- normalizedHT(nonHybrid)
+  nonHybrid.colname <- paste(column.name, "_count", sep = "")
+  nonHybrid.enrichment.col <- paste(column.name, "_enrichment", sep = "")
+  nonHybrid[, nonHybrid.colname] <- rowMeans(nonHybrid[, 1:3])
+  nonHybrid$gene_id <- as.character(rownames(nonHybrid))
+  nonHybrid <- nonHybrid[, c("gene_id", nonHybrid.colname)]
+
+  master.df <- merge(master.df, nonHybrid, by = "gene_id", all = TRUE)
+  robust.expression.df <- master.df[master.df$mRNA.level > 10, ]
+  robust.expression.df[, nonHybrid.colname][is.na(robust.expression.df[, nonHybrid.colname])] <- 0
+  robust.expression.df <- 
+    robust.expression.df[robust.expression.df[, nonHybrid.colname] > 0, ]
+  robust.expression.df[, nonHybrid.enrichment.col] <- 
+    log(robust.expression.df[, nonHybrid.colname] / robust.expression.df$mRNA.level, 2)
+  return(robust.expression.df)
+}
+
+robust.expression.df <- 
+  addNonHybridToMdf(master.df, 
+                    nonHybrid.utr3, 
+                    column.name = "nonHybrid.utr3"
+                    )
+
+robust.expression.df <- 
+  addNonHybridToMdf(robust.expression.df, 
+                    nonHybrid.CDS, 
+                    column.name = "nonHybrid.CDS"
+                    )
+
+cor.test(
+  robust.expression.df$nonHybrid.utr3_enrichment, 
+  robust.expression.df$nonHybrid.CDS_enrichment
+  )
+
+ggplot(data = robust.expression.df) + 
+  geom_point(
+    aes(x = nonHybrid.utr3_enrichment, 
+        y = nonHybrid.CDS_enrichment), 
+    alpha = 0.3)
+
+write.table(
+  robust.expression.df, 
+  robust.expression.df.file, 
+  sep = "\t", 
+  col.names = TRUE, 
+  row.names = FALSE
+  )
+
+
+@
+
+\begin{figure}[htbt]
+\centering
+\includegraphics[width=1\linewidth]{hiCLIP_data_analysis_3-Non_hybrid_enrichment}
+\caption{The enrichment of non-hybrid reads on STAU1 target mRNAs.}
+\label{fig:Non_hybrid_enrichment}
+\end{figure}
+
+<<sessinInfo, results=tex, echo=FALSE>>=
+toLatex(sessionInfo())
+
+proc.time() - ptm
+@
+
+\end{document}

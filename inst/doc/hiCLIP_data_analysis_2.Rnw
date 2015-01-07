@@ -1,0 +1,407 @@
+%\VignetteIndexEntry{hiCLIP_anlaysis2 Vignette}
+%\VignetteKeyword{high-throughput DNA sequncing}
+%\VignetteKeyword{RNA structures}
+%\VignettePackage{hiCLIP_data_analysis_2}
+\documentclass[12pt]{article}
+\usepackage{hyperref}
+\usepackage{url}
+
+\newcommand{\textprime}{\textsuperscript{\ensuremath{\prime}}}
+
+\textwidth=6.2in
+\textheight=8.5in
+\oddsidemargin=0.2in
+\evensidemargin=0.2in
+\headheight=0in
+\headsep=0in
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+\title{Appendix 5/12}
+%\author{Yoichiro Sugimoto and Jernej Ule}
+\date{\today}
+\maketitle
+
+The appendix 5 generates count table of mRNA-Seq and ribosome profiling reads, and normalizes these data. The data are compiled into a master table, which also contains essential information of the genes such as the length and GO term of the encoded protein.
+
+\tableofcontents
+
+\section{Package used}
+
+<<Setting directory, echo=FALSE>>=
+ptm <- proc.time()
+options(width=60)
+args <- commandArgs(trailingOnly = TRUE) 
+hiCLIP_index <- grepl("hiCLIPdir=", args) 
+hiCLIP.dir <- as.character(gsub("hiCLIPdir=", "", args[hiCLIP_index])) 
+Rdir_index <- grepl("Rdir=", args) 
+R.dir <- as.character(gsub("Rdir=", "", args[Rdir_index])) 
+pythondir_index <- grepl("pythondir=", args) 
+python.dir <- as.character(gsub("pythondir=", "", args[pythondir_index])) 
+
+lib.path <- paste(R.dir, "/library/", sep = "")
+.libPaths(lib.path)
+@
+
+Following packages are loaded.
+<<set path to package, echo = TRUE>>=
+library(biomaRt)
+library(reshape2)
+library(plyr)
+library(GenomicRanges)
+library(ShortRead)
+library(ggplot2)
+@
+
+<<source R codes, echo = FALSE>>=
+sourceDir <- function(path, trace = TRUE, ...) {
+    for (nm in list.files(path, pattern = "\\.[RrSsQq]$")) {
+       source(file.path(path, nm), ...)
+    }
+}
+
+functions.dir <- paste(hiCLIP.dir, "/R/functions", sep = "")
+sourceDir(functions.dir)
+@
+
+\section{Generating count table for mRNA-Seq and ribosome profiling data}
+Read count of mRNA-Seq and ribosome profiling on each gene and trimmed CDS region is calculated as follows.
+
+<<Set directory for count table, echo=FALSE>>=
+gr.tc.longest.mRNA.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/gr_tc_longest_mRNA.Rdata", sep = "")
+annotation.tab.file <- paste(hiCLIP.dir, "/data/processed/annotation/gene_annotations.tab", sep = "")
+
+# Directory of mapped bed like file
+RP.bed.dir <- paste(hiCLIP.dir, "/results/mapping/ribosome_profiling/bed", sep = "")
+RP.out.pre <- paste(hiCLIP.dir, "/results/mapping/ribosome_profiling/count_table/RP", sep = "")
+dir.create(paste(hiCLIP.dir, "/results/mapping/ribosome_profiling/count_table", sep = ""), showWarnings = FALSE)
+
+mRNASeq.bed.dir <- paste(hiCLIP.dir, "/results/mapping/mRNASeq/bed", sep = "")
+mRNASeq.out.pre <- paste(hiCLIP.dir, "/results/mapping/mRNASeq/count_table/mRNASeq", sep = "")
+dir.create(paste(hiCLIP.dir, "/results/mapping/mRNASeq/count_table", sep = ""), showWarnings = FALSE)
+
+@
+
+mRNA-Seq read count of mRNAs is analyzed as well as both mRNA-Seq and ribosome profiling read count of the CDSs of mRNAs trimmed 30 nts from both end are analyzed. In order to trim the CDS, CDSs where the width is longer than 100 nts are considered.
+
+<<Create count table for mRNASeq and ribosome profiling, echo=TRUE>>=
+load(gr.tc.longest.mRNA.Rdata)
+
+CDS <- gr.tc.longest.mRNA[elementMetadata(gr.tc.longest.mRNA)$annot == "CDS"]
+trimmed.CDS <- CDS[width(CDS) > 100]
+start(trimmed.CDS) <- start(trimmed.CDS) + 30
+end(trimmed.CDS) <- end(trimmed.CDS) - 30
+
+annotation.df <- read.table(
+  annotation.tab.file, 
+  stringsAsFactors = FALSE, 
+  header = TRUE
+  )
+
+mRNA.annotation.df <- annotation.df[
+  annotation.df$category == "protein_coding", ]
+
+RP.match.pattern <- "\\_RP_total.bed$"
+
+createCountTable(
+  RP.bed.dir, 
+  RP.match.pattern, 
+  RP.out.pre, 
+  mRNA.annotation.df, 
+  trimmed.CDS
+  )
+
+mRNASeq.match.pattern <- "\\_mRNASeq_total.bed$"
+
+createCountTable(
+  mRNASeq.bed.dir, 
+  mRNASeq.match.pattern, 
+  mRNASeq.out.pre, 
+  mRNA.annotation.df, 
+  trimmed.CDS
+  )
+@
+
+\section{Normalization of high-throughput DNA sequencing data by DESeq}
+The count data are normalized by \texttt{DESeq} package. 
+
+<<Set directory for normalization of ht data, echo=FALSE>>=
+mRNASeq.all.file <- paste(hiCLIP.dir, "/results/mapping/mRNASeq/count_table/mRNASeq_total_count.txt", sep = "")
+mRNASeq.trim30.file <- paste(hiCLIP.dir, "/results/mapping/mRNASeq/count_table/mRNASeq_trim30.CDS_count.txt", sep = "")
+RP.trim30.file <- paste(hiCLIP.dir, "/results/mapping/ribosome_profiling/count_table/RP_trim30.CDS_count.txt", sep = "")
+
+mRNASeq.all.out <- paste(hiCLIP.dir, "/results/mapping/DESeq/mRNASeq_total", sep = "")
+mRNASeq.trim30.out <- paste(hiCLIP.dir, "/results/mapping/DESeq/mRNASeq_trim30.CDS", sep = "")
+RP.trim30.out <- paste(hiCLIP.dir, "/results/mapping/DESeq/RP_trim30.CDS", sep = "")
+@
+
+<<Normalization of ht data, echo=TRUE>>=
+RunDESeq(mRNASeq.all.file, mRNASeq.all.out)
+RunDESeq(mRNASeq.trim30.file, mRNASeq.trim30.out)
+RunDESeq(RP.trim30.file, RP.trim30.out)
+@
+
+\section{Compiling master table}
+The count data from mRNASeq and ribosome profiling are integrated with hiCLIP data, and the master table is compiled.
+
+<<Set directory for master table, echo=FALSE>>=
+mRNASeq <- read.table(paste(hiCLIP.dir, "/results/mapping/DESeq/mRNASeq_total_DESeqNormalisedCounts.tab", sep = ""), sep = "\t", header = TRUE, row.names = 1, stringsAsFactors = FALSE)
+mRNASeq.trim30 <- read.table(paste(hiCLIP.dir, "/results/mapping/DESeq/mRNASeq_trim30.CDS_DESeqNormalisedCounts.tab", sep = ""), sep = "\t", header = TRUE, row.names = 1, stringsAsFactors = FALSE)
+RP.trim30 <- read.table(paste(hiCLIP.dir, "/results/mapping/DESeq/RP_trim30.CDS_DESeqNormalisedCounts.tab", sep = ""), sep = "\t", header = TRUE, row.names = 1, stringsAsFactors = FALSE)
+
+confident.duplex.range <- read.table(paste(hiCLIP.dir, "/results/manuscript/range/confident/range_summary.tab", sep = ""), sep = "\t", header = TRUE, stringsAsFactors = FALSE)
+
+
+out.master.df.file <- paste(hiCLIP.dir, "/results/manuscript/master_table.tab", sep = "")
+@
+
+In order to calculate RPKN (Read per Kilobase per Normalized Library size), the length of mRNA is calculated.
+
+<<mRNA length, echo=TRUE>>=
+mRNA.length <- aggregate(width(gr.tc.longest.mRNA),
+                         by = list(as.character(seqnames(gr.tc.longest.mRNA))),
+                         FUN = sum
+                         )
+
+mRNA.length.vec <- mRNA.length$x
+names(mRNA.length.vec) <- as.character(mRNA.length$Group.1)
+@
+
+DESeq data is further normalized in order to compare mRNASeq and ribosome profiling data. Also, STAU1 is removed from the table.
+
+<<Normalization of DESeq data, echo=TRUE>>=
+normalizedHT <- function(df){
+  df <- 1000000 * df / mean(colSums(df))
+  # remove STAU1 for later analysis
+  df <- df[!(rownames(df) %in% "ENSG00000124214"), ]
+  return(df)
+}
+
+mRNASeq <- normalizedHT(mRNASeq)
+mRNASeq.trim30 <- normalizedHT(mRNASeq.trim30)
+RP.trim30 <- normalizedHT(RP.trim30)
+@
+
+Expression and translation level of each gene at each condition are calculated as the average of the duplicate experiments.
+
+<<Calculate mRNA and translation level, echo=TRUE>>=
+mRNASeq.wt <- rowMeans(mRNASeq[, 1:2])
+mRNASeq.KD <- rowMeans(mRNASeq[, 3:4])
+mRNASeq.RC <- rowMeans(mRNASeq[, 5:6])
+
+mRNASeq.wt.KD <- log(mRNASeq.wt / mRNASeq.KD, 2)
+mRNASeq.RC.KD <- log(mRNASeq.RC / mRNASeq.KD, 2)
+mRNASeq.RC.wt <- log(mRNASeq.RC / mRNASeq.wt, 2)
+
+if(is.character(names(mRNASeq.wt.KD))){
+  mRNA.df <- data.frame(gene_id = names(mRNASeq.wt.KD),
+                        mRNA.count = mRNASeq.wt,
+                        mRNASeq.wt.KD = mRNASeq.wt.KD,
+                        mRNASeq.RC.KD = mRNASeq.RC.KD,
+                        mRNASeq.RC.wt = mRNASeq.RC.wt,
+                        stringsAsFactors = FALSE
+                        )
+}
+
+if(is.character(mRNA.df$gene_id) 
+   & 
+     is.character(names(mRNA.length.vec))){
+
+  mRNA.df$mRNA.length <- mRNA.length.vec[mRNA.df$gene_id]
+  mRNA.df$mRNA.level <- 
+    1000 * mRNA.df$mRNA.count / mRNA.df$mRNA.length
+}
+
+
+mRNASeq.trim30 <- mRNASeq.trim30[
+  rownames(mRNASeq.trim30) %in% 
+    Reduce(intersect, 
+           list(rownames(RP.trim30), 
+                rownames(mRNASeq.trim30))), 
+  ]
+
+mRNASeq.trim30 <- mRNASeq.trim30[
+  order(rownames(mRNASeq.trim30)), 
+  ]
+
+RP.trim30 <- RP.trim30[
+  rownames(RP.trim30) %in% 
+    Reduce(intersect, 
+           list(rownames(RP.trim30), 
+                rownames(mRNASeq.trim30))), 
+  ]
+
+RP.trim30 <- RP.trim30[order(rownames(RP.trim30)), ]
+
+if(any(rownames(mRNASeq.trim30) != rownames(RP.trim30))){
+  stop("Names did not match")
+}
+
+Translation <- RP.trim30 / mRNASeq.trim30
+
+trln.wt <- rowMeans(Translation[, 1:2])
+trln.KD <- rowMeans(Translation[, 3:4])
+trln.RC <- rowMeans(Translation[, 5:6])
+
+trln.wt.KD <- log(trln.wt/trln.KD, 2)
+trln.RC.KD <- log(trln.RC/trln.KD, 2)
+trln.RC.wt <- log(trln.RC/trln.wt, 2)
+
+if(is.character(names(trln.wt.KD))){
+  trln.df <- data.frame(gene_id = names(trln.wt.KD),
+                        trln.eff.log2 = log(trln.wt, 2),
+                        trln.wt.KD = trln.wt.KD,
+                        trln.RC.KD = trln.RC.KD,
+                        trln.RC.wt = trln.RC.wt,
+                        stringsAsFactors = FALSE
+                        )
+}
+
+mRNA.trln.df <- merge(mRNA.df, trln.df, by = "gene_id", all = TRUE)
+
+confident.duplex <- selectLongest(confident.duplex.range, "rep.hybrid")
+master.df <- merge(mRNA.trln.df, confident.duplex, by = "gene_id", all = TRUE)
+
+@
+
+\section{Annotation of the encoded protein localization}
+
+Localization of encoded proteins is defined as described in the method using GO term.
+The master table is exported in tab delimited file.
+
+<<Localization of mRNA, echo=TRUE>>=
+## add localization information
+# function to map the localizatio of protein
+locFlagger <- function(vec){
+  flag <- NA
+  
+  if("GO:0031966" %in% vec){
+    flag <- "mitochondrial.membrane"
+  } else {}
+  
+  # first check whether this protein localized to nucleus
+  if(("GO:0005634" %in% vec) & !("GO:0031966" %in% vec)){
+    flag <- "nucleus"
+  } else {}
+
+  # cytoplasm
+  if(("GO:0005737" %in% vec) & !("GO:0031966" %in% vec)){
+    flag <- "cytoplasm"
+  } else {}
+
+  # integral membrane
+  if(("GO:0016021" %in% vec) & !("GO:0031966" %in% vec)){
+    flag <- "integral.membrane"
+  } else {}
+
+  return(flag)
+}
+
+ERmembraneFlagger <- function(vec){
+  flag <- NA
+  
+  if("GO:0005789" %in% vec){
+    flag <- "ER.membrane"
+  } else {}
+  
+  return(flag)
+}
+
+# find GO term and add protein localization 
+# by the definition from PMID: 23102813
+# and then add HGNC symbol
+if(is.character(master.df$gene_id)){
+  geneUniverse <- master.df$gene_id
+  listMarts(host='may2012.archive.ensembl.org')
+  ensembl67 <- useMart(
+    host='may2012.archive.ensembl.org', 
+    biomart='ENSEMBL_MART_ENSEMBL', 
+    dataset='hsapiens_gene_ensembl'
+    )
+  # download GO term
+  goids = getBM(
+    attributes=c('ensembl_gene_id','go_id'), 
+    filters='ensembl_gene_id', 
+    values= geneUniverse, 
+    mart=ensembl67
+    )
+
+  # annotate protein localization as was done in PMID: 23102813
+  # nucleus (GO:0005634 - GO:0031966)
+  # integral membrane (GO:0016021 - GO:0031966)
+  # cytoplasm (GO:0005737 - GO:0031966)
+  # ER associated (GO:0016021 W GO:0005576 W GO:0009986 W GO:0005794 
+  # W GO:0005783 - GO:0031966)
+  # where W and - are set operators for union and subtraction
+
+  goids <- goids[goids$go_id != "", ]
+  goid.df <- aggregate(goids, by = list(goids$ensembl_gene_id), FUN = c)
+
+  goid.df$loc <- sapply(goid.df$go_id, locFlagger)
+  colnames(goid.df)[1] <- "ensembl_gene_id"
+  loc.dic <- goid.df$loc
+  names(loc.dic) <- goid.df$ensembl_gene_id
+  if(is.character(names(loc.dic))){
+    master.df$protein.localization <- loc.dic[master.df$gene_id]
+  }
+
+  # download HGNC symbol symbol
+  hgnc_symbol = getBM(
+    attributes=c('ensembl_gene_id','hgnc_symbol'), 
+    filters='ensembl_gene_id', 
+    values= geneUniverse, 
+    mart=ensembl67
+    )
+  
+  hgnc_symbol <- hgnc_symbol[!duplicated(hgnc_symbol$ensembl_gene_id), ]
+  if(is.character(hgnc_symbol$ensembl_gene_id)){
+    hgnc.vec <- hgnc_symbol$hgnc_symbol
+    names(hgnc.vec) <- hgnc_symbol$ensembl_gene_id
+    master.df$hgnc_symbol <- hgnc.vec[master.df$gene_id]
+  }
+
+  # find gene with GO:0005789, endoplasmic reticulum membrane
+  goid.df$ER.membrane <- sapply(goid.df$go_id, ERmembraneFlagger)
+  ER.membrane.dic <- goid.df$ER.membrane
+  names(ER.membrane.dic) <- goid.df$ensembl_gene_id
+  if(is.character(names(ER.membrane.dic))){
+    master.df$ER.membrane <- ER.membrane.dic[master.df$gene_id]
+  }
+}
+
+master.df <- master.df[, 
+                       c("gene_id", 
+                         "hgnc_symbol", 
+                         "mRNA.count", 
+                         "mRNASeq.wt.KD", 
+                         "mRNASeq.RC.KD", 
+                         "mRNASeq.RC.wt", 
+                         "mRNA.length", 
+                         "mRNA.level", 
+                         "trln.eff.log2", 
+                         "trln.RC.KD", 
+                         "rep.hybrid.utr3.annot", 
+                         "rep.hybrid.utr3.distance", 
+                         "protein.localization")]
+
+write.table(
+  master.df, 
+  out.master.df.file, 
+  sep = "\t", 
+  col.names = TRUE, 
+  row.names = FALSE
+  )
+
+
+@
+
+\section{Session Info}
+
+<<sessinInfo, results=tex, echo=FALSE>>=
+toLatex(sessionInfo())
+
+proc.time() - ptm
+@
+
+\end{document}

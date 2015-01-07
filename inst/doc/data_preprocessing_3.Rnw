@@ -1,0 +1,127 @@
+%\VignetteIndexEntry{Preprocessing data Vignette}
+%\VignetteKeyword{high-throughput DNA sequncing}
+%\VignetteKeyword{RNA structures}
+%\VignettePackage{preprocessing_data}
+\documentclass[12pt]{article}
+\usepackage{hyperref}
+\usepackage{url}
+
+\newcommand{\textprime}{\textsuperscript{\ensuremath{\prime}}}
+
+\textwidth=6.2in
+\textheight=8.5in
+\oddsidemargin=0.2in
+\evensidemargin=0.2in
+\headheight=0in
+\headsep=0in
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+\title{Appendix 3/12}
+%\author{Yoichiro Sugimoto and Jernej Ule}
+\date{\today}
+\maketitle
+
+The appendix 3 parses annotation files downloaded in the appendix 1 and creates the gtf file compatible with \texttt{IGV-2.1.20} browser.
+
+\tableofcontents
+
+\section{Packages used}
+<<Setting directory, echo=FALSE>>=
+ptm <- proc.time()
+options(width=60)
+args <- commandArgs(trailingOnly = TRUE) 
+hiCLIP_index <- grepl("hiCLIPdir=", args) 
+hiCLIP.dir <- as.character(gsub("hiCLIPdir=", "", args[hiCLIP_index])) 
+Rdir_index <- grepl("Rdir=", args) 
+R.dir <- as.character(gsub("Rdir=", "", args[Rdir_index])) 
+pythondir_index <- grepl("pythondir=", args) 
+python.dir <- as.character(gsub("pythondir=", "", args[pythondir_index])) 
+
+lib.path <- paste(R.dir, "/library/", sep = "")
+.libPaths(lib.path)
+@
+
+<<Load packages, echo=TRUE>>=
+library(GenomicRanges)
+library(ShortRead)
+@
+
+\section{Construction of IGV compatible gtf file}
+Gtf file for IGV is created as follows.
+
+<<Source function and file directories, echo=FALSE>>=
+source(paste(hiCLIP.dir, "/R/pre_processing/i0_1_preprocessing_data_functions.R", sep = ""))
+source(paste(hiCLIP.dir, "/R/pre_processing/i0_2_generate_fasta_from_gtf.R", sep = ""))
+source(paste(hiCLIP.dir, "/R/pre_processing/i0_3_annotation_functios.R", sep = ""))
+
+gr.longest.mRNA.Rdata <- paste(hiCLIP.dir, "/data/unprocessed/Rdata/gr_longest_mRNA.Rdata", sep = "")
+
+gr.tc.longest.mRNA.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/gr_tc_longest_mRNA.Rdata", sep = "")
+gr.tc.longest.ncRNA.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/gr_tc_longest_ncRNA.Rdata", sep = "")
+gr.tc.longest.gene.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/gr_tc_longest_gene.Rdata", sep = "")
+
+gr.tc.longest.gene.IGV.gtf.file <- paste(hiCLIP.dir, "/data/processed/gtf/gr_tc_longest_gene_IGV.gtf", sep = "")
+@
+
+<<Construction of gtf file for IGV, echo=TRUE>>=
+load(gr.longest.mRNA.Rdata)
+load(gr.tc.longest.mRNA.Rdata)
+load(gr.tc.longest.ncRNA.Rdata)
+load(gr.tc.longest.gene.Rdata)
+
+elementMetadata(gr.tc.longest.gene)$annot <- as.character(
+                    elementMetadata(gr.tc.longest.gene)$annot
+                    )
+
+na.flag <- is.na(elementMetadata(gr.tc.longest.gene)$annot)
+elementMetadata(gr.tc.longest.gene)$annot[na.flag] <- "exon"
+
+CDS.exon <- gr.tc.longest.gene[
+  elementMetadata(gr.tc.longest.gene)$annot %in% c("CDS", "exon")
+  ]
+
+mRNA.len <- lenGr(gr.longest.mRNA)
+
+mRNA.exon.gtf <- GRanges(
+  seqnames = Rle(names(mRNA.len)),
+  ranges = IRanges(start = 1,
+    end = mRNA.len
+    ),
+  strand = Rle(rep("+", length(mRNA.len))),
+  annot = rep("exon", length(mRNA.len))
+  )
+
+
+seqlevels.in.use <- as.character(seqlevels(gr.tc.longest.gene))
+seqlevels(mRNA.exon.gtf) <- seqlevels.in.use
+
+CDS <- gr.tc.longest.mRNA[
+  elementMetadata(gr.tc.longest.mRNA)$annot == "CDS"
+  ]
+seqlevels(CDS) <- seqlevels.in.use
+start.codon <- CDS
+start.codon <- resize(start.codon, 3)
+elementMetadata(start.codon)$annot <- "start_codon"
+
+stop.codon <- CDS
+start(stop.codon) <- end(stop.codon) - 2
+elementMetadata(stop.codon)$annot <- "stop_codon"
+
+gr.tc.longest.gene.IGV <- c(CDS.exon, mRNA.exon.gtf, start.codon, stop.codon)
+
+gr.tc.longest.gene.IGV <- sort(gr.tc.longest.gene.IGV)
+
+write.IGV.GTF(gr.tc.longest.gene.IGV, gr.tc.longest.gene.IGV.gtf.file)
+@
+
+\section{SessionInfo}
+
+<<sessinInfo, results=tex, echo=FALSE>>=
+toLatex(sessionInfo())
+
+proc.time() - ptm
+@
+
+\end{document}

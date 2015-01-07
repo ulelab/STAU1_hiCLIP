@@ -1,0 +1,169 @@
+%\VignetteIndexEntry{hiCLIP_data_analysis_8 Vignette}
+%\VignetteKeyword{high-throughput DNA sequncing}
+%\VignetteKeyword{RNA structures}
+%\VignettePackage{hiCLIP_data_analysis_8}
+\documentclass[12pt]{article}
+\usepackage{hyperref}
+\usepackage{url}
+
+\newcommand{\textprime}{\textsuperscript{\ensuremath{\prime}}}
+
+\textwidth=6.2in
+\textheight=8.5in
+\oddsidemargin=0.2in
+\evensidemargin=0.2in
+\headheight=0in
+\headsep=0in
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+\title{Appendix 11/12}
+%\author{Yoichiro Sugimoto and Jernej Ule}
+\date{\today}
+\maketitle
+
+The appendix 11 performs the extraction of RNA duplexes mapped to 18S rRNAs.
+
+\tableofcontents
+
+\section{Packages used}
+
+<<Setting directory, echo=FALSE>>=
+ptm <- proc.time()
+options(width=60)
+args <- commandArgs(trailingOnly = TRUE) 
+hiCLIP_index <- grepl("hiCLIPdir=", args) 
+hiCLIP.dir <- as.character(gsub("hiCLIPdir=", "", args[hiCLIP_index])) 
+Rdir_index <- grepl("Rdir=", args) 
+R.dir <- as.character(gsub("Rdir=", "", args[Rdir_index])) 
+pythondir_index <- grepl("pythondir=", args) 
+python.dir <- as.character(gsub("pythondir=", "", args[pythondir_index])) 
+
+lib.path <- paste(R.dir, "/library/", sep = "")
+.libPaths(lib.path)
+@
+
+<<Maintenance, echo=FALSE>>=
+# qsub -b y -pe smp 2 -j y /lmb/home/yoichiro/R-2.15.1/bin/Rscript /netscr/yoichiro/STAU1_hiCLIP/R/temp_exec/RNAfold_forgi.R
+# hiCLIP.dir <- "/netscr/yoichiro/STAU1_hiCLIP2"
+# R.dir <- "~/R-2.15.1"
+# python.dir <- "~/Python-2.7.1/"
+# lib.path <- paste(R.dir, "/library/", sep = "")
+# .libPaths(lib.path)
+@
+
+Following packages are loaded.
+<<set path to package, echo = TRUE>>=
+library(GenomicRanges)
+library(ShortRead)
+@
+
+<<source R codes, echo = FALSE>>=
+sourceDir <- function(path, trace = TRUE, ...) {
+  for (nm in list.files(path, pattern = "\\.[RrSsQq]$")) {
+    source(file.path(path, nm), ...)
+  }
+}
+
+S4dir <- paste(hiCLIP.dir, "/R/S4", sep = "")
+sourceDir(S4dir)
+
+functions.dir <- paste(hiCLIP.dir, "/R/functions", sep = "")
+sourceDir(functions.dir)
+
+options("scipen"=-2, "digits"=4, "useDingbats"=FALSE)
+@
+
+\section{The hybrid reads mapped to 18S rRNA}
+Since the cryo-EM determined complete structure is available for 18S rRNAs, we compared the hybrid reads mapped to 18S rRNA with the experimentally determined structures
+
+<<Set directories, echo=FALSE>>=
+rRNA.total.low.bed.file <- paste(hiCLIP.dir, "/results/mapping/hiCLIP/hybrid/rRNA_unique_bed/hybrid_DOX_LigPlus-barcode_for_hiClip-total.tab", sep = "")
+rRNA.total.high.bed.file <- paste(hiCLIP.dir, "/results/mapping/hiCLIP/hybrid/rRNA_unique_bed/hybrid_DOX_LigPlusHighRNase-barcode_for_hiClip-total.tab", sep = "")
+
+rRNA.low.sam.file <- paste(hiCLIP.dir, "/results/mapping/hiCLIP/hybrid/sam_P1_mapped_unique/hybrid_DOX_LigPlus.sam", sep = "")
+rRNA.high.sam.file <- paste(hiCLIP.dir, "/results/mapping/hiCLIP/hybrid/sam_P1_mapped_unique/hybrid_DOX_LigPlusHighRNase.sam", sep = "")
+
+rRNA.fasta <- paste(hiCLIP.dir, "/data/unprocessed/fasta/hs_rRNAs_and_tRNAs.fa", sep = "")
+distance.dir <- paste(hiCLIP.dir, "/results/manuscript/range", sep = "")
+distance.rRNA.dir <- paste(distance.dir, "/rRNA", sep = "")
+
+intra.rRNA.duplex.hgrl.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/intra.rRNA.duplex.hgrl.Rdata", sep = "")
+
+file.name <- paste(hiCLIP.dir, "/results/18S_rRNA_mapped_hybrid_reads_summary.tab", sep = "")
+@
+
+The hybrid data are loaded and merged.
+
+<<Load hybrid data, echo=TRUE>>=
+rRNA.total.low.grL <- newHybridGRL(rRNA.total.low.bed.file, rRNA.low.sam.file)
+rRNA.total.high.grL <- newHybridGRL(rRNA.total.high.bed.file, rRNA.high.sam.file)
+
+rRNA.total.merged.hgrl <- mergeHybrid(rRNA.total.low.grL, rRNA.total.high.grL)
+@
+
+The hybrid reads mapped to rRNAs are selected and the duplexes are identified as the hybrid reads mapped to mRNAs.
+
+<<Identify duplexes, echo=TRUE>>=
+intra.rRNA.total.merged.hgrl <- 
+  grepHybrid(rRNA.total.merged.hgrl, 
+             pattern = "rRNA", 
+             type = "intra")
+
+sr.rRNA <- readFasta(rRNA.fasta)
+
+
+intra.rRNA.duplex.hgrL <- findDuplex2(
+  intra.rRNA.total.merged.hgrl, sr.rRNA, 
+  distance.rRNA.dir, hiCLIP.dir
+  )
+
+save(intra.rRNA.duplex.hgrL, 
+     file = intra.rRNA.duplex.hgrl.Rdata)
+@
+
+Among those duplexes, those mapped to 18S rRNAs are selected.
+<<Select 18S, echo=TRUE>>=
+intra.rRNA_18S.duplex.hgrL <- 
+  grepHybrid(intra.rRNA.duplex.hgrL, 
+             pattern = "rRNA_18S", 
+             type = "intra")
+
+collapsed.intra.rRNA_18S.duplex.hgrL <- 
+  collapsedIdenticalHGRL(intra.rRNA_18S.duplex.hgrL)
+
+@
+
+<<The function for output, echo=FALSE>>=
+outputTableHGRL <- function(object, file.name){
+  df <- data.frame(L_seqname = as.character(seqnames(object$L)),
+	L_start = start(object$L),
+	L_end = end(object$L),
+	R_seqname = as.character(seqnames(object$R)),
+	R_start = start(object$R),
+	R_end = end(object$R),
+	score = score(object$L)
+	)
+	df <- df[order(df$score, decreasing = TRUE), ]
+	write.table(df, file.name, row.names = FALSE, quote = FALSE, sep = "\t")
+}
+
+@
+
+The result is output as a tab file.
+
+<<Output result,echo=TRUE>>=
+outputTableHGRL(collapsed.intra.rRNA_18S.duplex.hgrL, 
+                file.name)
+@
+
+
+\section{Session Info}
+<<sessinInfo, results=tex, echo=FALSE>>=
+toLatex(sessionInfo())
+
+proc.time() - ptm
+@
+
+\end{document}

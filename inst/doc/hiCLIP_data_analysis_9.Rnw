@@ -1,0 +1,506 @@
+%\VignetteIndexEntry{hiCLIP_data_analysis_9 Vignette}
+%\VignetteKeyword{high-throughput DNA sequncing}
+%\VignetteKeyword{RNA structures}
+%\VignettePackage{hiCLIP_data_analysis_9}
+\documentclass[12pt]{article}
+\usepackage{hyperref}
+\usepackage{url}
+
+\newcommand{\textprime}{\textsuperscript{\ensuremath{\prime}}}
+
+\textwidth=6.2in
+\textheight=8.5in
+\oddsidemargin=0.2in
+\evensidemargin=0.2in
+\headheight=0in
+\headsep=0in
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+\title{Appendix 12/12}
+%\author{Yoichiro Sugimoto and Jernej Ule}
+\date{\today}
+\maketitle
+
+The appendix 12 performs the extra analysis.
+
+\tableofcontents
+
+\section{Packages used}
+
+<<Setting directory, echo=FALSE>>=
+ptm <- proc.time()
+options(width=60)
+args <- commandArgs(trailingOnly = TRUE) 
+hiCLIP_index <- grepl("hiCLIPdir=", args) 
+hiCLIP.dir <- as.character(gsub("hiCLIPdir=", "", args[hiCLIP_index])) 
+Rdir_index <- grepl("Rdir=", args) 
+R.dir <- as.character(gsub("Rdir=", "", args[Rdir_index])) 
+pythondir_index <- grepl("pythondir=", args) 
+python.dir <- as.character(gsub("pythondir=", "", args[pythondir_index])) 
+
+lib.path <- paste(R.dir, "/library/", sep = "")
+.libPaths(lib.path)
+@
+
+<<Maintenance, echo=FALSE>>=
+# qsub -b y -pe smp 2 -j y /lmb/home/yoichiro/R-2.15.1/bin/Rscript /netscr/yoichiro/STAU1_hiCLIP/R/temp_exec/RNAfold_forgi.R
+# hiCLIP.dir <- "/netscr/yoichiro/STAU1_hiCLIP2"
+# R.dir <- "~/R-2.15.1"
+# python.dir <- "~/Python-2.7.1/"
+# lib.path <- paste(R.dir, "/library/", sep = "")
+# .libPaths(lib.path)
+@
+
+Following packages are loaded.
+<<set path to package, echo = TRUE>>=
+library(venneuler)
+library(reshape2)
+library(plyr)
+library(GenomicRanges)
+library(ShortRead)
+library(ggplot2)
+@
+
+<<source R codes, echo = FALSE>>=
+sourceDir <- function(path, trace = TRUE, ...) {
+  for (nm in list.files(path, pattern = "\\.[RrSsQq]$")) {
+    source(file.path(path, nm), ...)
+  }
+}
+
+S4dir <- paste(hiCLIP.dir, "/R/S4", sep = "")
+sourceDir(S4dir)
+
+functions.dir <- paste(hiCLIP.dir, "/R/functions", sep = "")
+sourceDir(functions.dir)
+
+options("scipen"=-2, "digits"=4, "useDingbats"=FALSE)
+@
+
+\section{The correlation of non-hybrid read count on mRNAs}
+In order to examine the reporducibility of the replicate experiments, we analyzed the correlation of non-hybrid read count on mRNAs.
+
+<<Set directories, echo=FALSE>>=
+annotation.tab.file <- paste(hiCLIP.dir, "/data/processed/annotation/gene_annotations.tab", sep = "")
+
+                                        # Directory of mapped bed like file
+nonHybrid.bed.dir <- paste(hiCLIP.dir, "/results/mapping/hiCLIP/nonHybrid/bed", sep = "")
+nonHybrid.out.pre <- paste(hiCLIP.dir, "/results/mapping/hiCLIP/nonHybrid/countTable/nonHybrid", sep = "")
+dir.create(paste(hiCLIP.dir, "/results/mapping/hiCLIP/nonHybrid/countTable", sep = ""), showWarnings = FALSE, recursive = TRUE)
+
+non.hybrid.total_count.table.file <- paste(hiCLIP.dir, "/results/mapping/hiCLIP/nonHybrid/countTable/nonHybrid_total_count_mRNA.txt", sep = "")
+nonHybrid.total.out <- paste(hiCLIP.dir, "/results/mapping/DESeq/nonHybrid_toatl", sep = "")
+nonHybrid.total.DESeq.file <- paste(hiCLIP.dir, "/results/mapping/DESeq/nonHybrid_toatl_DESeqNormalisedCounts.tab", sep = "")
+@
+
+<<create count table, echo=TRUE>>=
+annotation.df <- read.table(
+  annotation.tab.file, 
+  stringsAsFactors = FALSE, 
+  header = TRUE
+  )
+
+mRNA.annotation.df <- 
+  annotation.df[
+    annotation.df$category == "protein_coding", 
+    ]
+
+nonHybrid.match.pattern <- "\\_collapsed.bed$"
+
+createCountTableNonHybrid(
+  nonHybrid.bed.dir, 
+  nonHybrid.match.pattern, 
+  nonHybrid.out.pre, 
+  mRNA.annotation.df
+  )
+
+RunDESeqNonHybrid(non.hybrid.total_count.table.file, 
+                  nonHybrid.total.out)
+
+nonHybrid.total.DESeq.df <- 
+  read.table(nonHybrid.total.DESeq.file, 
+             sep = "\t", 
+             header = 1)
+
+nonHybrid.total.DESeq.df.values <- normaliseDf(
+  nonHybrid.total.DESeq.df[, 2:4], 
+  min.val = 10)
+
+options("scipen"=-2, "digits"=4, "useDingbats"=FALSE)
+
+nonHybrid.total.DESeq.df.values <- 
+  log(nonHybrid.total.DESeq.df.values, 10)
+
+cor1 <- cor.test(
+  nonHybrid.total.DESeq.df.values$nonHybrid_DOX_LigMinus_collapsed, 
+  nonHybrid.total.DESeq.df.values$nonHybrid_DOX_LigPlus_collapsed
+  )
+cor1
+cor1$p.value
+
+cor2 <- cor.test(
+  nonHybrid.total.DESeq.df.values$nonHybrid_DOX_LigMinus_collapsed, 
+  nonHybrid.total.DESeq.df.values$nonHybrid_DOX_LigPlusHighRNase_collapsed
+  )
+cor2
+cor2$p.value
+
+cor3 <- cor.test(
+  nonHybrid.total.DESeq.df.values$nonHybrid_DOX_LigPlusHighRNase_collapsed, 
+  nonHybrid.total.DESeq.df.values$nonHybrid_DOX_LigPlus_collapsed
+  )
+cor3
+cor3$p.value
+
+
+@
+
+<<Following functions is downloaded, echo=FALSE>>=
+# Downloaded from https://gist.github.com/aaronwolen/3298388 on 11th/Aug/2014
+#' Modified version of the ggplot2 plotmatrix function that accepts additional
+#' variables for aesthetic mapping.
+#' 
+#' example
+#' data(iris)
+#' iris.vars <- c("Sepal.Length", "Sepal.Width", "Petal.Length", "Petal.Width")
+#' ggpairs(data = iris, facet.vars = iris.vars, 
+#'  mapping = aes(color = Species, shape = Species))
+
+ggpairs2 <- function (data, facet.vars = colnames(data), facet.scale = "free",
+  mapping = aes(), size = 1, alpha = 1, shape = 16, color = "black", 
+  density = FALSE, bins = 30) {
+  
+  suppressMessages(require(ggplot2, quietly = TRUE))
+  
+  facet.scale <- match.arg(facet.scale, c("free", "fixed"))
+  
+  if(length(mapping) > 0) {
+    aes.vars <- unique(as.character(unlist(mapping)))
+    aes.data <- data[, aes.vars]
+
+    if(length(aes.vars) == 1) {
+      aes.data <- data.frame(aes.data)
+      names(aes.data) <- aes.vars
+    }
+  }
+  
+  data <- data[, facet.vars]
+  
+  grid <- expand.grid(x = 1:ncol(data), y = 1:ncol(data))
+  grid <- subset(grid, x != y)
+  
+  # data.frame with xy coordinates
+  all <- lapply(1:nrow(grid), function(i) {
+    xcol <- grid[i, "x"]
+    ycol <- grid[i, "y"]
+    data.frame(xvar = names(data)[ycol], yvar = names(data)[xcol], 
+               x = data[, xcol], y = data[, ycol])
+  })
+  
+  # add aes variables to all
+  if(length(mapping) > 0) {
+    all <- lapply(all, cbind, aes.data)
+  }
+  
+  all <- do.call("rbind", all)
+  
+  all$xvar <- factor(all$xvar, levels = names(data))
+  all$yvar <- factor(all$yvar, levels = names(data))
+  
+  xy.mapping <- aes_string(x = "x", y = "y")
+  class(xy.mapping) <- "uneval"
+  
+  p <- ggplot(all, xy.mapping) + facet_grid(xvar ~ yvar, scales = facet.scale)
+  
+  if(density) {
+    p <- p + stat_binhex(bins = bins, geom = "hex")
+  } else {
+    
+    geom.args <- list(mapping = mapping, stat = "identity", na.rm = TRUE)
+    
+    # Add manual aesthetic mappings 
+    if (!"size" %in% names(mapping)) geom.args$size <- size
+    if (!"alpha" %in% names(mapping)) geom.args$alpha <- alpha
+    if (!"colour" %in% names(mapping)) geom.args$colour <- color
+    
+    # Assume geom should be text is mapping includes label
+    if("label" %in% names(mapping)) {
+      geom.args$geom <- "text"
+    } else {
+      geom.args$geom <- "point"
+      if (!"shape" %in% names(mapping)) geom.args$shape <- shape
+    }
+    geom <- do.call("layer", geom.args)
+    p <- p + geom
+  }
+  
+  # Calculate each variable's kernel density 
+  densities <- with(all, simplify = FALSE, 
+    tapply(x, yvar, stats::density, na.rm = TRUE))
+  densities <- lapply(densities, function(x) data.frame(x = x$x, y = x$y))
+  names(densities) <- levels(all$xvar)
+  
+  # Melt densities
+  densities <- reshape2::melt(densities, id.vars = c("x", "y"))
+  names(densities) <- c("x", "y", "xvar")
+  densities$xvar <- factor(densities$xvar, levels = levels(all$xvar))
+  densities$yvar <- factor(densities$xvar, levels = levels(all$xvar))
+  
+  # Scale each variable's density estimate to match range of the variable
+  densities$scaled <- NA
+  for(v in levels(all$xvar)) {
+    var.dens <- densities$y[densities$xvar == v]
+    
+    scaled.dens <- scales::rescale(var.dens, to = range(data[, v], na.rm = TRUE))
+    densities$scaled[densities$xvar == v] <- scaled.dens
+  }
+  
+  # Add density line to plot
+  p <- p + geom_line(data = densities, aes(x = x, y = scaled), color = "grey20")
+  
+  return(p)
+}
+
+@
+
+
+<<nonHybrid_corplot, echo=TRUE, fig=TRUE, include=FALSE>>=
+ggpairs2(nonHybrid.total.DESeq.df.values, density = TRUE)
+@
+
+\begin{figure}[htbt]
+\centering
+\includegraphics[width=.6\linewidth]{hiCLIP_data_analysis_9-nonHybrid_corplot}
+\caption{The non-hybrid count on mRNAs.}
+\label{fig:nonHybrid_corplot}
+\end{figure}
+
+\section{Additional analysis for the function of STAU1 binding}
+The functional correlation between STAU1 binding and post-transcriptional regulation is examined.
+
+<<Load directories 2, echo=FALSE>>=
+out.master.df.file <- paste(hiCLIP.dir, "/results/manuscript/master_table.tab", sep = "")
+all.duplex.range.file <- paste(hiCLIP.dir, "/results/manuscript/range/all/range_summary.tab", sep = "")
+@
+
+
+<<Output result,echo=TRUE>>=
+master.df <- read.table(
+  out.master.df.file, 
+  header = TRUE, 
+  stringsAsFactors = FALSE, 
+  sep = "\t"
+  )
+
+master.df <- master.df[!is.na(master.df$mRNASeq.RC.KD), ]
+
+trln.master.df <- master.df[!is.na(master.df$trln.eff.log2), ]
+trln.master.df <- 
+  trln.master.df[
+    !(1:nrow(trln.master.df) %in% 
+        grep("^HIST", trln.master.df$hgnc_symbol)), ]
+
+all.range.df <- read.table(
+  all.duplex.range.file, 
+  header = TRUE, 
+  stringsAsFactors = FALSE, 
+  sep = "\t"
+  )
+
+CDS.range.df <- all.range.df[all.range.df$annot == "CDS", ]
+utr3.range.df <- all.range.df[all.range.df$annot == "utr3", ]
+@
+
+The following functions were used for the analysis.
+
+<<Function,echo=TRUE>>=
+cumPlot <- function(mRNA.level, xlim.val = c(-0.2, 0.2), XBP1.flag = FALSE){
+
+  wil.out <- wilcox.test(
+    mRNA.level$examined.values[mRNA.level$dup == "dup"],
+    mRNA.level$examined.values[mRNA.level$dup == "no.dup"]
+    )
+  
+  print(wil.out)
+  print(wil.out$p.value)
+  
+  mRNA.level <- 
+    ddply(mRNA.level, 
+          .(dup), 
+          transform, 
+          cum.frac = ecdf(examined.values)(examined.values)
+          )
+  
+  p <- ggplot(mRNA.level) + 
+    geom_line(aes(x = examined.values, 
+                  y = cum.frac, 
+                  group = dup, 
+                  col = dup)
+              ) + 
+                coord_cartesian(xlim=xlim.val)
+  
+  if(XBP1.flag){
+    p <- p + geom_point(data = mRNA.level[(mRNA.level$gene_id == "ENSG00000100219"), ], aes(x = examined.values, y = cum.frac), col = "red")
+  }
+  
+  return(p)
+}
+
+function.binding <- function(master.df, range.df, examined.value = "mRNASeq.RC.KD", xlim.val = c(-0.2, 0.2), XBP1.flag = FALSE){
+
+  dup.bin <- master.df$gene_id %in% range.df$gene_id
+  master.df$dup.count <- 0
+  master.df$dup.count[dup.bin] <- 
+    table(range.df$gene_id)[master.df$gene_id[dup.bin]]
+  master.df$dup <- "no.dup"  
+  master.df$dup[dup.bin] <- "dup"
+
+  mRNA.level <- master.df[, 
+                          c("gene_id",
+                            examined.value, 
+                            "dup.count",
+                            "dup")
+                          ]
+
+  colnames(mRNA.level)[2] <- "examined.values"
+  
+  print("First, the raw values were analyzed...")     
+  p1 <- cumPlot(mRNA.level, xlim.val = xlim.val, XBP1.flag = XBP1.flag)     
+
+  print("Second, the values examined were weighted...")       
+  mRNA.level.weighted <- mRNA.level[rep(1:nrow(mRNA.level), ifelse(mRNA.level$dup.count > 0, mRNA.level$dup.count, 1)), ]
+  p2 <- cumPlot(mRNA.level.weighted, xlim.val = xlim.val, XBP1.flag = XBP1.flag)
+
+  p.list <- list(bin = p1, wighted = p2)
+  return(p.list)
+}
+@
+
+The association between the existance of the duplexes in the 3' UTR of mRNAs and the impact on mRNA stability upon STAU1 KD compared with RC were examined. In the right panel of the figure, the mRNA level change data is weighted by the number of duplexes in the 3' UTR.
+
+First, the overlap of mRNAs with STAU1 target RNA duplexes in their 3' UTR and CDS is examined.
+
+<<Venn, echo=TRUE, fig=TRUE, include=FALSE>>=
+nrow(master.df)
+utr3.genes <- unique(utr3.range.df$gene_id)
+CDS.genes <- unique(CDS.range.df$gene_id)
+both.genes <-  CDS.genes[CDS.genes %in% utr3.genes]
+
+length(utr3.genes)
+length(CDS.genes)
+length(both.genes)
+
+v <- venneuler(
+  c(utr3 = length(utr3.genes) - length(both.genes), 
+    CDS = length(CDS.genes) - length(both.genes), 
+    "utr3&CDS" = length(both.genes))
+               )
+plot(v)
+
+@
+
+
+\begin{figure}[htbt]
+\centering
+\includegraphics[width=.6\linewidth]{hiCLIP_data_analysis_9-Venn}
+\caption{Venn diagram for the set of mRNAs with STAU1 target RNA duplexes in their 3' UTR and CDS.}
+\label{fig:Venn}
+\end{figure}
+
+Similar stats for the analysis of the translational efficiency is analyzed.
+<<Venn2, echo=TRUE>>=
+nrow(trln.master.df)
+utr3.genes.trln <- utr3.genes[utr3.genes %in% trln.master.df$gene_id]
+CDS.genes.trln <- CDS.genes[CDS.genes %in% trln.master.df$gene_id]
+both.genes.trln <-  CDS.genes.trln[CDS.genes.trln %in% utr3.genes.trln]
+
+length(utr3.genes.trln)
+length(CDS.genes.trln)
+length(both.genes.trln)
+@
+
+<<UTR3_mRNA, echo=TRUE, fig=TRUE, include=FALSE, width=7, height=3.5>>=
+utr3.mRNA.ps <- 
+  function.binding(master.df, 
+                   utr3.range.df, 
+                   examined.value = "mRNASeq.RC.KD",
+                   xlim.val = c(-0.2, 0.2), 
+                   XBP1.flag = TRUE
+                   )
+
+multiplot(utr3.mRNA.ps$bin, utr3.mRNA.ps$wighted, cols = 2)
+@
+
+\begin{figure}[htbt]
+\centering
+\includegraphics[width=.6\linewidth]{hiCLIP_data_analysis_9-UTR3_mRNA}
+\caption{The STAU1 target RNA duplexes in the 3' UTR and mRNA level impact}
+\label{fig:UTR3_mRNA}
+\end{figure}
+
+Similar to above analysis but the duplexes in CDS were also examined.
+
+<<CDS_mRNA, echo=TRUE, fig=TRUE, include=FALSE, width=7, height=3.5>>=
+CDS.mRNA.ps <- function.binding(
+  master.df, 
+  CDS.range.df, 
+  examined.value = "mRNASeq.RC.KD"
+  )
+multiplot(CDS.mRNA.ps$bin, CDS.mRNA.ps$wighted, cols = 2)
+@
+
+\begin{figure}[htbt]
+\centering
+\includegraphics[width=.6\linewidth]{hiCLIP_data_analysis_9-CDS_mRNA}
+\caption{The STAU1 target RNA duplexes in the CDS and mRNA level impact}
+\label{fig:CDS_mRNA}
+\end{figure}
+
+
+Similar to the analysis described above, but the association of the duplexes in the 3' UTR and translational changes was examined.
+<<utr3_trln, echo=TRUE, fig=TRUE, include=FALSE, width=7, height=3.5>>=
+utr3.trln.ps <- function.binding(
+  trln.master.df, 
+  utr3.range.df, 
+  examined.value = "trln.RC.KD", 
+  xlim.val = c(-0.4, 0.4))
+multiplot(utr3.trln.ps$bin, utr3.trln.ps$wighted, cols = 2)
+@
+
+\begin{figure}[htbt]
+\centering
+\includegraphics[width=.6\linewidth]{hiCLIP_data_analysis_9-utr3_trln}
+\caption{The STAU1 target RNA duplexes in the 3' UTR and translational level impact}
+\label{fig:utr3_trln}
+\end{figure}
+
+Similar to the analysis described above, but the association of the duplexes in CDS and translational changes was examined.
+<<CDS_trln, echo=TRUE, fig=TRUE, include=FALSE, width=7, height=3.5>>=
+CDS.trln.ps <- function.binding(
+  trln.master.df, 
+  CDS.range.df, 
+  examined.value = "trln.RC.KD", 
+  xlim.val = c(-0.4, 0.4)
+  )
+
+multiplot(CDS.trln.ps$bin, CDS.trln.ps$wighted, cols = 2)
+@
+
+\begin{figure}[htbt]
+\centering
+\includegraphics[width=.6\linewidth]{hiCLIP_data_analysis_9-CDS_trln}
+\caption{The STAU1 target RNA duplexes in CDS and translational level impact}
+\label{fig:CDS_trln}
+\end{figure}
+
+
+\section{Session Info}
+<<sessinInfo, results=tex, echo=FALSE>>=
+toLatex(sessionInfo())
+
+proc.time() - ptm
+@
+
+\end{document}

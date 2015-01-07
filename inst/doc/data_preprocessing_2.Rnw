@@ -1,0 +1,269 @@
+%\VignetteIndexEntry{Preprocessing data Vignette}
+%\VignetteKeyword{high-throughput DNA sequncing}
+%\VignetteKeyword{RNA structures}
+%\VignettePackage{preprocessing_data}
+\documentclass[12pt]{article}
+\usepackage{hyperref}
+\usepackage{url}
+
+\newcommand{\textprime}{\textsuperscript{\ensuremath{\prime}}}
+
+\textwidth=6.2in
+\textheight=8.5in
+\oddsidemargin=0.2in
+\evensidemargin=0.2in
+\headheight=0in
+\headsep=0in
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+\title{Appendix 2/12}
+%\author{Yoichiro Sugimoto and Jernej Ule}
+\date{\today}
+\maketitle
+
+The appendix 2 parses annotation files downloaded in the appendix 1. The parsed annotation was used throughout the analysis.
+
+\tableofcontents
+
+<<Setting directory, echo=FALSE>>=
+ptm <- proc.time()
+options(width=60)
+args <- commandArgs(trailingOnly = TRUE) 
+hiCLIP_index <- grepl("hiCLIPdir=", args) 
+hiCLIP.dir <- as.character(gsub("hiCLIPdir=", "", args[hiCLIP_index])) 
+Rdir_index <- grepl("Rdir=", args) 
+R.dir <- as.character(gsub("Rdir=", "", args[Rdir_index])) 
+pythondir_index <- grepl("pythondir=", args) 
+python.dir <- as.character(gsub("pythondir=", "", args[pythondir_index])) 
+
+lib.path <- paste(R.dir, "/library/", sep = "")
+.libPaths(lib.path)
+library(GenomicRanges)
+@
+
+\section{Construction of annotation table}
+Genes are annotated as protein-coding, miRNA, lncRNA, and other ncRNAs according to ENSEMBL annotation. The annotation is stored in tab delimited format. 
+First, the genes which have protein coding isoforms are annotated as mRNA.
+
+<<Source function and file directories, echo=FALSE>>=
+source(paste(hiCLIP.dir, "/R/pre_processing/i0_1_preprocessing_data_functions.R", sep = ""))
+source(paste(hiCLIP.dir, "/R/pre_processing/i0_2_generate_fasta_from_gtf.R", sep = ""))
+source(paste(hiCLIP.dir, "/R/pre_processing/i0_3_annotation_functios.R", sep = ""))
+
+gr.longest.mRNA.Rdata <- paste(hiCLIP.dir, "/data/unprocessed/Rdata/gr_longest_mRNA.Rdata", sep = "")
+gr.longest.ncRNA.Rdata <- paste(hiCLIP.dir, "/data/unprocessed/Rdata/gr_longest_ncRNA.Rdata", sep = "")
+annotation.tab.file <- paste(hiCLIP.dir, "/data/processed/annotation/gene_annotations.tab", sep = "")
+@
+
+<<Construction of annotation table for mRNA, echo=TRUE>>=
+load(gr.longest.mRNA.Rdata)
+load(gr.longest.ncRNA.Rdata)
+
+ncRNAs.len <- lenGr(gr.longest.ncRNA)
+
+# ncRNAs.len should be named vector
+head(ncRNAs.len)
+
+# curate protein coding genes
+mRNAs.genes <- unique(as.character
+                      (elementMetadata(gr.longest.mRNA)$gene_id)
+                      )
+                      
+mRNA.annot.df <-  data.frame(
+  gene_id = mRNAs.genes,
+  category = "protein_coding",
+  annot = "protein_coding",
+  stringsAsFactors = FALSE
+  )
+@
+
+Genes annotated as miRNA by ENSEMBL are annotated as miRNA. Genes annotated as (processed transcript, antisense, lincRNA, sense intronic, sense overlapping, 3prime overlapping ncrna, pseudogene, transcribed processed pseudogene, unprocessed pseudogene, transcribed unprocessed pseudogene) by ENSEMBL and those longer than 200 nts are defined as lncRNAs. Transcripts not annotated in the above procedure are annotated as other ncRNA. 
+
+<<Construction of annotation table for ncRNA, echo=TRUE>>=
+non.r.ncRNAs <- gr.longest.ncRNA[!duplicated(
+  as.character(elementMetadata(gr.longest.ncRNA)$gene_id)
+  )]
+
+ncRNA.annot.df <- data.frame(
+  gene_id = as.character(elementMetadata(non.r.ncRNAs)$gene_id),
+  category = as.character(elementMetadata(non.r.ncRNAs)$annot),
+  len = 0,
+  annot = NA,
+  stringsAsFactors = FALSE
+  )
+
+if(is.character(names(ncRNAs.len))
+   &
+   is.character(ncRNA.annot.df$gene_id)
+   ){
+  ncRNA.annot.df$len <- ncRNAs.len[ncRNA.annot.df$gene_id]
+}
+
+ncRNA.annot.df$annot <- 
+  ifelse(
+  (ncRNA.annot.df$category %in% c("processed_transcript",
+                                  "antisense",
+                                  "lincRNA",
+                                  "sense_intronic",
+                                  "sense_overlapping",
+                                  "3prime_overlapping_ncrna",
+                                  "pseudogene",
+                                  "transcribed_processed_pseudogene",
+                                  "unprocessed_pseudogene",
+                                  "transcribed_unprocessed_pseudogene")
+   )
+  &
+  (ncRNA.annot.df$len > 200),
+  "lncRNA",
+  "other_ncRNAs"
+  )
+
+ncRNA.annot.df$annot[ncRNA.annot.df$category == "miRNA"] <- "miRNA"
+
+ncRNA.annot.df <- ncRNA.annot.df[, c("gene_id", "category", "annot")]
+
+merged.df <- rbind(mRNA.annot.df, ncRNA.annot.df)
+
+write.table(merged.df, 
+            annotation.tab.file, 
+            quote = FALSE, 
+            sep = "\t", 
+            col.names = TRUE, 
+            row.names = FALSE)
+@
+
+\section{Construction of transcriptomic coordinate GRanges object for mRNA}
+
+Genes categorized as mRNA (protein-coding) are further annotated as 5\textprime\ UTR, CDS and 3\textprime\ UTR. For this purpose, transcriptomic coordinate GRanges objects are created for mRNAs, ncRNAs and all genes.
+
+<<Set directories, echo=FALSE>>=
+gr.longest.mRNA.Rdata <- paste(hiCLIP.dir, "/data/unprocessed/Rdata/gr_longest_mRNA.Rdata", sep = "")
+gr.longest.ncRNA.Rdata <- paste(hiCLIP.dir, "/data/unprocessed/Rdata/gr_longest_ncRNA.Rdata", sep = "")
+
+gr.tc.longest.mRNA.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/gr_tc_longest_mRNA.Rdata", sep = "")
+gr.tc.longest.ncRNA.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/gr_tc_longest_ncRNA.Rdata", sep = "")
+gr.tc.longest.gene.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/gr_tc_longest_gene.Rdata", sep = "")
+load(gr.longest.mRNA.Rdata)
+load(gr.longest.ncRNA.Rdata)
+@
+
+First, transcrtiptomic coordinate GRanges object is created for mRNAs.
+<<Construct mRNA GRanges object, echo=TRUE, keep.source=FALSE>>=
+utr5 <- gr.longest.mRNA[elementMetadata(gr.longest.mRNA)$annot == "utr5"]
+CDS <- gr.longest.mRNA[elementMetadata(gr.longest.mRNA)$annot == "CDS"]
+utr3 <- gr.longest.mRNA[elementMetadata(gr.longest.mRNA)$annot == "utr3"]
+
+utr5.len <- lenGr(utr5)
+CDS.len <- lenGr(CDS)
+utr3.len <- lenGr(utr3)
+
+if(is.character(names(utr5.len)) &
+   is.character(names(CDS.len)) &
+   is.character(names(utr3.len))
+   ){
+  utr5.df <- data.frame(gene_id = names(utr5.len), utr5.len = utr5.len)
+  CDS.df <- data.frame(gene_id = names(CDS.len), CDS.len = CDS.len)
+  utr3.df <- data.frame(gene_id = names(utr3.len), utr3.len = utr3.len)
+  
+  sum.df <- merge(utr5.df, CDS.df, all = TRUE, by = "gene_id")
+  sum.df <- merge(sum.df, utr3.df, all = TRUE, by = "gene_id")
+  sum.df[is.na(sum.df)] <- 0
+  sum.df$zero <- 0
+  sum.df[, 6:8] <- t(apply(sum.df[, 2:4], 1, function(x){cumsum(as.integer(x))}))
+  
+  utr5.gtf.df <- data.frame(gene_id = sum.df$gene_id, start = sum.df$zero + 1, end = sum.df$V6, annot = "utr5")
+  CDS.gtf.df <- data.frame(gene_id = sum.df$gene_id, start = sum.df$V6 + 1, end = sum.df$V7, annot = "CDS")
+  utr3.gtf.df <- data.frame(gene_id = sum.df$gene_id, start = sum.df$V7+ 1, end = sum.df$V8, annot = "utr3")
+  
+  utr5.gtf.df <- utr5.gtf.df[(utr5.gtf.df$end - utr5.gtf.df$start) > 0, ]
+  CDS.gtf.df <- CDS.gtf.df[(CDS.gtf.df$end - CDS.gtf.df$start) > 0, ]
+  utr3.gtf.df <- utr3.gtf.df[(utr3.gtf.df$end - utr3.gtf.df$start) > 0, ]
+  gtf.df <- rbind(utr5.gtf.df, CDS.gtf.df, utr3.gtf.df)
+  
+    
+  gr.tc.longest.mRNA <- GRanges(
+    seqnames = Rle(gtf.df$gene_id),
+    ranges = IRanges(start = gtf.df$start,
+      end = gtf.df$end
+      ),
+    strand = Rle(rep("+", nrow(gtf.df))),
+    annot = gtf.df$annot
+    )
+  gr.tc.longest.mRNA <- sort(gr.tc.longest.mRNA)
+  save(gr.tc.longest.mRNA, file = gr.tc.longest.mRNA.Rdata)
+} else {
+  print("lenGr should return named vector")
+}
+@
+
+Second, transcrtiptomic coordinate GRanges object is created for ncRNAs.
+
+<<Construct ncRNA GRanges object, echo=TRUE, keep.source=FALSE>>=
+ncRNA.len <- lenGr(gr.longest.ncRNA)
+names(ncRNA.len) <- as.character(names(ncRNA.len))
+
+if(is.character(names(ncRNA.len))){
+  ncRNA.df <- data.frame(gene_id = names(ncRNA.len), ncRNA.len = ncRNA.len)
+  
+  gr.tc.longest.ncRNA <- GRanges(
+    seqnames = Rle(ncRNA.df$gene_id),
+    ranges = IRanges(start = 1,
+      width = ncRNA.df$ncRNA.len
+      ),
+    strand = Rle(rep("+", nrow(ncRNA.df))),
+    annot = rep("ncRNA", nrow(ncRNA.df))
+    )
+  
+  gr.tc.longest.ncRNA <- sort(gr.tc.longest.ncRNA)
+  
+  save(gr.tc.longest.ncRNA, file = gr.tc.longest.ncRNA.Rdata)
+} else {
+  print("lenGr should return named vector")
+}
+@
+
+Finally, transcriptomic coordinate GRanges objects for mRNAs and ncRNAs are merged.
+
+<<Construct all gene transcriptomic GRanges object, echo=TRUE, keep.source=FALSE>>=
+all.seqnames <- unique(
+  c(
+    as.character(seqlevels(gr.tc.longest.mRNA)),
+    as.character(seqlevels(gr.tc.longest.ncRNA))
+    )
+                       )
+
+seqlevels(gr.tc.longest.mRNA) <- all.seqnames
+seqlevels(gr.tc.longest.ncRNA) <- all.seqnames
+
+gr.tc.longest.gene <- c(gr.tc.longest.mRNA, gr.tc.longest.ncRNA)
+gr.tc.longest.gene <- sort(gr.tc.longest.gene)
+
+save(gr.tc.longest.gene, file = gr.tc.longest.gene.Rdata)
+@
+
+\section{Construction of collapsed annotation}
+
+Collapsed annotation used for phase 4 mapped read annotation is constructed as follows.
+
+<<source functions and set paths, echo=FALSE>>=
+mRNA.gtf.file <- paste(hiCLIP.dir, "/data/unprocessed/gtf/Homo_sapiens.GRCh37.67_mRNAs.gtf", sep = "")
+gr.mRNA.with.intron.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/gr_mRNA_with_intron.Rdata", sep = "")
+@
+
+<<Construct collapsed annotation, echo=TRUE, keep.source=FALSE>>=
+grL.mRNA <- read.GTF(mRNA.gtf.file)
+gr.mRNA.with.intron <- grLToGr(grL.mRNA, annot.selected = "all")
+save(gr.mRNA.with.intron, file = gr.mRNA.with.intron.Rdata)
+@
+
+\section{SessionInfo}
+
+<<sessinInfo, results=tex, echo=FALSE>>=
+toLatex(sessionInfo())
+
+proc.time() - ptm
+@
+
+\end{document}

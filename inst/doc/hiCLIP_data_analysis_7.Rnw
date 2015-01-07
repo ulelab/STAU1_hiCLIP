@@ -1,0 +1,404 @@
+%\VignetteIndexEntry{hiCLIP_data_analysis_7 Vignette}
+%\VignetteKeyword{high-throughput DNA sequncing}
+%\VignetteKeyword{RNA structures}
+%\VignettePackage{hiCLIP_data_analysis_7}
+\documentclass[12pt]{article}
+\usepackage{hyperref}
+\usepackage{url}
+
+\newcommand{\textprime}{\textsuperscript{\ensuremath{\prime}}}
+
+\textwidth=6.2in
+\textheight=8.5in
+\oddsidemargin=0.2in
+\evensidemargin=0.2in
+\headheight=0in
+\headsep=0in
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+\title{Appendix 10/12}
+%\author{Yoichiro Sugimoto and Jernej Ule}
+\date{\today}
+\maketitle
+
+The appendix 10 performs the comparison of RNAfold (\url{http://www.tbi.univie.ac.at/RNA/RNAfold.html}) predicted structures and hybrid identified structures as well as the analysis of the range of RNA structures.
+
+\tableofcontents
+
+\section{Packages used}
+
+<<Setting directory, echo=FALSE>>=
+ptm <- proc.time()
+options(width=60)
+args <- commandArgs(trailingOnly = TRUE) 
+hiCLIP_index <- grepl("hiCLIPdir=", args) 
+hiCLIP.dir <- as.character(gsub("hiCLIPdir=", "", args[hiCLIP_index])) 
+Rdir_index <- grepl("Rdir=", args) 
+R.dir <- as.character(gsub("Rdir=", "", args[Rdir_index])) 
+pythondir_index <- grepl("pythondir=", args) 
+python.dir <- as.character(gsub("pythondir=", "", args[pythondir_index])) 
+
+lib.path <- paste(R.dir, "/library/", sep = "")
+.libPaths(lib.path)
+@
+
+<<Maintenance, echo=FALSE>>=
+# qsub -b y -pe smp 2 -j y /lmb/home/yoichiro/R-2.15.1/bin/Rscript /netscr/yoichiro/STAU1_hiCLIP/R/temp_exec/RNAfold_forgi.R
+# hiCLIP.dir <- "/netscr/yoichiro/STAU1_hiCLIP"
+# R.dir <- "~/R-2.15.1"
+# python.dir <- "~/Python-2.7.1/"
+# lib.path <- paste(R.dir, "/library/", sep = "")
+# .libPaths(lib.path)
+@
+
+Following packages are loaded.
+<<set path to package, echo = TRUE>>=
+library(reshape2)
+library(plyr)
+library(GenomicRanges)
+library(ShortRead)
+library(ggplot2)
+@
+
+
+
+
+<<source R codes, echo = FALSE>>=
+sourceDir <- function(path, trace = TRUE, ...) {
+    for (nm in list.files(path, pattern = "\\.[RrSsQq]$")) {
+       source(file.path(path, nm), ...)
+    }
+}
+
+S4dir <- paste(hiCLIP.dir, "/R/S4", sep = "")
+sourceDir(S4dir)
+
+functions.dir <- paste(hiCLIP.dir, "/R/functions", sep = "")
+sourceDir(functions.dir)
+
+options("scipen"=-2, "digits"=4, "useDingbats"=FALSE)
+@
+
+\section{Comparison of the RNAfold predicted structures and hybrid identified structures.}
+
+The structures in 3' UTRs are analyzed. 
+
+<<Set directory for RNAfold analysis, echo=FALSE>>=
+gr.tc.longest.mRNA.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/gr_tc_longest_mRNA.Rdata", sep = "")
+longest.gene.fasta <- paste(hiCLIP.dir, "/data/processed/fasta/longest_mRNA_and_ncRNA.fa", sep = "")
+
+all.collapsed.duplex.hgrL.Rdata <- paste(hiCLIP.dir, "/data/processed/Rdata/all.collapsed.duplex.hgrL.Rdata", sep = "")
+@
+
+The following data are loaded.
+<<Load data, echo=TRUE>>=
+sr.longest.gene <- readFasta(longest.gene.fasta)
+load(gr.tc.longest.mRNA.Rdata)
+load(all.collapsed.duplex.hgrL.Rdata)
+
+@
+
+First, all structures in 3' UTRs are selected.
+<<Select structures in utr3s, echo=TRUE>>=
+
+utr3.all.collapsed.duplex.hgrL <- selectHybridAnnot(
+  all.collapsed.duplex.hgrL, 
+  gr.tc.longest.mRNA, 
+  annot = "utr3")
+
+@
+
+Then, the sequence of the 3' UTRs containing all structures are obtained for the RNAfold analysis.
+
+<<Select utr3s containing hybrid predicted structures, echo=TRUE>>=
+utr3 <- gr.tc.longest.mRNA[
+  elementMetadata(gr.tc.longest.mRNA)$annot == "utr3"]
+utr3.selected <- utr3[
+  seqnames(utr3) %in% unique(
+    as.character(
+      seqnames(utr3.all.collapsed.duplex.hgrL$L)
+      )
+    )
+  ]
+
+utr3.selected <- addSeqGR(utr3.selected, sr.longest.gene)
+@
+
+For the later comparison, the position of hybrid identified structures are shifted so that the first base of the 3' UTRs are 1.
+<<Shift positions, echo=TRUE>>=
+shifted.utr3.all.collapsed.duplex.hgrL <- 
+  shiftCD(utr3.all.collapsed.duplex.hgrL, utr3.selected)
+@
+
+<<Directories for RNAfold analysis, echo=FALSE>>=
+RNAfold_out.dir <- paste(hiCLIP.dir, "/results/manuscript/RNAfold", sep = "")
+dir.create(RNAfold_out.dir, showWarnings = FALSE, recursive = TRUE)
+RNAfold_db.file <- paste(RNAfold_out.dir, "/RNAfold.db.txt", sep = "")
+utr3.fasta <- paste(RNAfold_out.dir, "/utr3.fa", sep = "")
+@
+
+The 3' UTR sequences are stored as a fasta file.
+<<Write fasta, echo=TRUE>>=
+writeFastaGR(utr3.selected, utr3.fasta)
+@
+
+The RNAfold program is used to predict the structures of the 3' UTRs.
+<<Run RNAfold, echo=TRUE>>=
+RNAfoldCommand <- paste(hiCLIP.dir, 
+                        "/inst/bin/ViennaRNA-2.1.3/Progs/RNAfold --noPS < ", 
+                        utr3.fasta, 
+                        " > ", RNAfold_db.file, 
+                        sep = "")
+print(RNAfoldCommand)
+system(RNAfoldCommand)
+@
+
+In order to parse the duplexes identified by the RNAfold predicted structures, forgi package (\url{http://www.tbi.univie.ac.at/~pkerp/forgi/}) was used.
+<<Run RNA forgi>>=
+RNAforgiCommand <- paste(python.dir, "/python ", 
+                         hiCLIP.dir, 
+                         "/inst/Python/runRNAforgi_parallel.py -i ", 
+                         RNAfold_db.file, 
+                         " -o ", RNAfold_out.dir, 
+                         " -d ", hiCLIP.dir, 
+                         " -p ", python.dir, 
+                         sep = "")
+print(RNAforgiCommand)
+system(RNAforgiCommand)
+@
+
+The output of the forgi analysis was parsed.
+<<parse forgi out, echo=TRUE>>=
+RNAforigi.file <- paste(RNAfold_out.dir, "/RNAforgi.out.txt", sep = "")
+forgi.out.list <- parseRNAforgi(RNAforigi.file)
+RNAfold.stem.HGRL <- forgiToHGRL(forgi.out.list)
+@
+
+The hybrid identified structures overlapping with the RNAfold predicted structures are examined, and the range of those predicted by RNAfold and those not predicted are compared.
+
+First, the all structures identified by the hybrid reads and RNAfold predicted structures are compared.
+<<Hybrid_RNAfold_comparison, echo=TRUE, fig=TRUE, include=FALSE, width=7, height=3.5>>=
+plot.all.RNAfold.comparison <- 
+  compareForgiRNAfold(shifted.utr3.all.collapsed.duplex.hgrL, 
+                      RNAfold.stem.HGRL)
+
+multiplot(plot.all.RNAfold.comparison$a, 
+          plot.all.RNAfold.comparison$b, 
+          cols = 2)
+@
+
+\begin{figure}[htbt]
+\centering
+\includegraphics[width=.6\linewidth]{hiCLIP_data_analysis_7-Hybrid_RNAfold_comparison}
+\caption{The range of all RNA structures in 3\textprime\ UTRs predicted by RNAfold and those not predicted are compared.}
+\label{fig:Hybrid_RNAfold_comparison}
+\end{figure}
+
+
+\section{The analysis of the range of RNA structures identified by the hybrid reads and RNAfold}
+This section is similar to the analysis done in the previous appendix file. The range of RNA structures recognized by STAU1 is examined. As a reference, the range of all RNA duplexes in the 3' UTRs which have the hybrid reads are also analyzed.
+
+The following functions are used for the analysis.
+
+<<Load directoris for the duplex range analysis, echo=FALSE>>=
+all.collapsed.duplex.range.file <- paste(hiCLIP.dir, "/results/manuscript/range/non_redundant_all/unexpanded_range_summary.tab", sep = "")
+@
+
+
+<<Functions for duplex range analysis, echo=TRUE>>=
+extractRanges <- function(duplex.range.file){
+  
+  duplex.range <- read.table(
+    duplex.range.file, 
+    header = TRUE, 
+    stringsAsFactors = FALSE, 
+    sep = "\t"
+    )
+
+  
+  duplex.range <- duplex.range[
+    duplex.range$annot == "utr3", ]
+  
+  return(duplex.range)
+}
+
+reportRangeRatios <- function(summary.df, flag.type = "hybrid"){
+  print(flag.type)
+  
+  summary.df <- summary.df[summary.df$cat == flag.type, ]  
+  
+  mes1 <- paste("In total",
+                nrow(summary.df),
+                " structures in are analyzed."
+                )
+  
+  mes2 <- paste(100 * sum(summary.df$distance > 100) / 
+                  nrow(summary.df),
+                "% of structures have a range longer than 100 nts"
+                )
+  
+  mes3 <- paste(100 * sum(summary.df$distance > 500) / 
+                  nrow(summary.df),
+                "% of structures have a range longer than 500 nts"
+                )
+  
+  mes4 <- paste(100 * sum(summary.df$distance > 1000) / 
+                  nrow(summary.df),
+                "% of structures have a range longer than 1000 nts"
+                )
+  
+  cat(paste(mes1, mes2, mes3, mes4, "\n", sep = "\n"))
+}
+
+reportRangeRatioRatios <- function(summary.df, flag.type = "hybrid"){
+  print(flag.type)
+  
+  summary.df <- summary.df[summary.df$cat == flag.type, ]	
+  
+  mes1 <- paste("In total",
+                nrow(summary.df),
+                " structures in are analyzed."
+                )
+  
+  mes2 <- paste(100 * sum(summary.df$distance.ratio > 0.1) / 
+                  nrow(summary.df),
+                "% of structures have a range longer than 10% of the gene segment"
+                )
+  
+  mes3 <- paste(100 * sum(summary.df$distance.ratio > 0.01) / 
+                  nrow(summary.df),
+                "% of structures have a range longer than 1% of the gene segment"
+                )
+  
+  mes4 <- paste(100 * sum(summary.df$distance.ratio > 0.001) / 
+                  nrow(summary.df),
+                "% of structures have a range longer than 0.1% of the gene segment"
+                )
+  
+  cat(paste(mes1, mes2, mes3, mes4, "\n", sep = "\n"))
+}
+
+
+
+analyzeHybridRNAfoldRanges <- function(forgi.out.list, hybrid.duplex.range.df, target.genes){
+  
+  hybrid.duplex.range.df <- 
+    hybrid.duplex.range.df[order(hybrid.duplex.range.df$gene_id), ]
+  
+  target.genes <- target.genes[order(target.genes)]
+  
+  if(!all(hybrid.duplex.range.df$gene_id == target.genes)){
+    stop("Input is likely to be wrong!!")
+  }
+  
+  target.forgi.list <- forgi.out.list[target.genes]
+  
+  forgi.duplex.ranges <- 
+    unlist(lapply(target.forgi.list, function(x){x$range}))
+  
+  forgi.duplex.range.ratios <- unlist(
+    mapply(function(x, y){x$range / y}, 
+           target.forgi.list, 
+           hybrid.duplex.range.df$gene.width)
+    )
+  
+  sum.hybrid.duplex.range.df <- 
+    hybrid.duplex.range.df[, c("distance", "distance.ratio")]
+  sum.hybrid.duplex.range.df$cat <- "hybrid"
+  
+  
+  sum.RNAfold.duplex.range.df <- data.frame(
+    distance = forgi.duplex.ranges, 
+    distance.ratio = forgi.duplex.range.ratios,
+    cat = "RNAfold",
+    stringsAsFactors = FALSE
+    )
+  
+  
+  summary.df <- rbind(
+    sum.hybrid.duplex.range.df, 
+    sum.RNAfold.duplex.range.df
+    )
+  
+  reportRangeRatios(summary.df, "hybrid")
+  reportRangeRatios(summary.df, "RNAfold")
+  
+  reportRangeRatioRatios(summary.df, "hybrid")
+  reportRangeRatioRatios(summary.df, "RNAfold")
+  
+  summary.df <- ddply(
+    summary.df,
+    .(cat),transform,
+    range.ecdf = ecdf(distance)(distance)
+    )
+  
+  summary.df <- ddply(
+    summary.df,
+    .(cat),transform,
+    range.ratio.ecdf = ecdf(distance.ratio)(distance.ratio)
+    )
+
+  p1 <- ggplot(summary.df) + 
+    geom_line(aes(x = log(distance, 10), 
+                  y = 1 - range.ecdf, 
+                  group = cat, color = cat)) + 
+      scale_x_reverse() +
+        ggtitle("Ranges [nts]")
+  
+  p2 <- ggplot(summary.df) + 
+    geom_line(aes(x = log(distance.ratio, 10), 
+                  y = 1- range.ratio.ecdf, 
+                  group = cat, color = cat)) + 
+      scale_x_reverse() +
+        ggtitle("Ratio of the ranges [nts]")
+
+  
+  result.plot <- list(a = p1, b = p2)  
+  
+  return(result.plot)   
+}
+
+
+@
+
+The genes containing hybrid reads in their 3' UTR are selected.
+<<The range analysis, echo=TRUE>>=
+
+all.hybrid.duplex.range.df <- 
+  extractRanges(all.collapsed.duplex.range.file)
+
+all.targets <- 
+  as.character(seqnames(utr3.all.collapsed.duplex.hgrL$L))
+@
+
+The range of all duplexes are analyzed.
+<<all_duplex_range, echo=TRUE, fig=TRUE, include=FALSE, width=7, height=3.5>>=
+
+out1 <- 
+  analyzeHybridRNAfoldRanges(forgi.out.list, 
+                all.hybrid.duplex.range.df, 
+                all.targets)
+
+multiplot(out1$a, 
+          out1$b, 
+          cols = 2)
+@
+
+\begin{figure}[htbt]
+\centering
+\includegraphics[width=1\linewidth]{hiCLIP_data_analysis_7-all_duplex_range}
+\caption{The analysis of the range of all RNA structures identified by the hybrid reads.}
+\label{fig:all_duplex_range}
+\end{figure}
+
+
+\section{Session Info}
+<<sessinInfo, results=tex, echo=FALSE>>=
+toLatex(sessionInfo())
+
+proc.time() - ptm
+@
+
+\end{document}
